@@ -5,6 +5,7 @@
 // voxel bridges for diagonals; capillary paths use 3D distance fields. Flow is a conservative face-flux
 // finite-volume pressure/transport model (not a full Navier-Stokes solver).
 import {applyArchitecture,buildRegionalTargets,integrateVesselRoute,ZONE} from './architecture.js';
+import {DIRECTIONS_26,voxelizeCurve} from './vascular-geometry.js';
 export const GRID=64;
 const N=GRID, N2=N*N, SIZE=N*N*N;
 const clamp=(x,a,b)=>Math.min(b,Math.max(a,x));
@@ -206,28 +207,53 @@ export class VolumeModel{
   }
   return dist;
  }
+ // Find a smooth descending route over the 3D distance field, not an
+ // axis-only Manhattan staircase. The 26-neighborhood is weighted by
+ // geometric distance, tissue resistance, and tangent continuation.
  pathFrom(i,dist,targetType){
   if(dist[i]===32767)return null;
-  let path=[],current=i,guard=0;
+  let path=[i],current=i,previous=null,guard=0;
   while(dist[current]>0&&guard++<SIZE){
-   let best=-1,d=dist[current];
-   let [x,y,z]=this.xyz(current);
+   let best=-1,score=-Infinity;
+   const [x,y,z]=this.xyz(current),source=dist[current];
    if(!this.inside(x,y,z))return null;
-   for(let o of step6){let j=current+o;if(dist[j]<d){d=dist[j];best=j}}
+   for(const d of DIRECTIONS_26){
+    const nx=x+d.x,ny=y+d.y,nz=z+d.z;
+    if(!this.inside(nx,ny,nz))continue;
+    const j=this.index(nx,ny,nz),matter=this.matter[j];
+    if(!matter||dist[j]>=source)continue;
+    if((matter===MAT.ARTERY||matter===MAT.VEIN)&&matter!==targetType)continue;
+    const progress=(source-dist[j])/d.length;
+    let tangent=0;
+    if(previous){
+     const dx=x-previous[0],dy=y-previous[1],dz=z-previous[2];
+     const l=Math.hypot(dx,dy,dz)||1;
+     tangent=(dx*d.x+dy*d.y+dz*d.z)/(l*d.length);
+    }
+    const cost=(matter===targetType?.60:.13*this.resistance[j]);
+    const value=progress+.20*tangent-cost;
+    if(value>score){best=j;score=value;}
+   }
    if(best<0)return null;
-   if(this.matter[current]===MAT.TISSUE||this.matter[current]===MAT.DENSE||this.matter[current]===MAT.WALL)path.push(current);
-   current=best;
+   previous=[x,y,z];current=best;path.push(current);
   }
   if(this.matter[current]!==targetType)return null;
   return path;
  }
  connectThrough(i,dA,dV){
-  let a=this.pathFrom(i,dA,MAT.ARTERY),b=this.pathFrom(i,dV,MAT.VEIN);
-  if(!a||!b||a.length+b.length>75)return false;
-  for(let index of a.concat(b)){
-   if(!this.isFluid(index))this.setFluid(index,MAT.CAPILLARY);
-  }
-  return true;
+  const a=this.pathFrom(i,dA,MAT.ARTERY),
+    b=this.pathFrom(i,dV,MAT.VEIN);
+  if(!a||!b||a.length+b.length>56)return false;
+  // Convert independent curved guides into the same material lattice.
+  // Each short arc joins the existing inlet/outlet tree by physical
+  // fluid voxels; there is no hidden conduit or graph-edge flow.
+  const artery=voxelizeCurve(this,MAT.CAPILLARY,a.reverse(),{
+   radius:1.00,strength:.65
+  });
+  const vein=voxelizeCurve(this,MAT.CAPILLARY,b.reverse(),{
+   radius:1.00,strength:.65
+  });
+  return artery.newVoxels+vein.newVoxels>0;
  }
  // Mature conducting trunks according to the metabolic work of downstream
  // branch territories. High-load parent channels become a little wider,
@@ -244,7 +270,7 @@ export class VolumeModel{
     if(p>=0&&this.matter[p]===type)this.branchLoad[p]+=this.branchLoad[i];
    }
    for(let i of sites){
-    const load=this.branchLoad[i],r=load>36?2:load>12?1.6:load>4?1.16:0;
+    const load=this.branchLoad[i],r=load>65?2.15:load>22?1.72:load>9?1.36:0;
     if(!r)continue;
     const [x,y,z]=this.xyz(i);
     for(let dz=-2;dz<=2;dz++)for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++){
@@ -292,11 +318,11 @@ export class VolumeModel{
     candidates.push({x,y,z,i,score});
    }
    candidates.sort((a,b)=>b.score-a.score);
-   const chosen=[],budget=round===0?56:38;
+   const chosen=[],budget=round===0?26:17;
    for(let c of candidates){
     if(chosen.length>=budget)break;
-    if(selected.some(p=>sq(p.x-c.x)+sq(p.y-c.y)+sq(p.z-c.z)<(this.settings.organ==='heart'?13:26)))continue;
-    if(chosen.some(p=>sq(p.x-c.x)+sq(p.y-c.y)+sq(p.z-c.z)<(this.settings.organ==='heart'?22:38)))continue;
+    if(selected.some(p=>sq(p.x-c.x)+sq(p.y-c.y)+sq(p.z-c.z)<(this.settings.organ==='heart'?28:48)))continue;
+    if(chosen.some(p=>sq(p.x-c.x)+sq(p.y-c.y)+sq(p.z-c.z)<(this.settings.organ==='heart'?33:62)))continue;
     if(this.connectThrough(c.i,dA,dV)){chosen.push(c);created++;}
    }
    if(!chosen.length)break;
@@ -462,7 +488,7 @@ export class VolumeModel{
   if(this.finished)return;
   this.matureTrunks();
   this.recomputeCoverage();
-  this.connectCapillaryBeds(8);
+  this.connectCapillaryBeds(5);
   this.rebuildWall();
   this.solvePressure();
   this.recomputeCoverage(true);
