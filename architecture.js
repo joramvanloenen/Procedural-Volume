@@ -110,13 +110,26 @@ export function buildRegionalTargets(model,type,count){
  const affinity=type===3?model.supplyAffinity:model.drainAffinity;
  const zones=new Map(),N=model.N;
  for(let z=3;z<N-3;z+=3)for(let y=3;y<N-3;y+=3)for(let x=3;x<N-3;x+=3){
-  const i=model.index(x,y,z);
-  if(model.matter[i]!==1&&model.matter[i]!==2)continue;
-  const layer=model.layers[i],a=affinity[i];
-  if(a<.3)continue;
-  const demand=model.demand[i],density=model.density[i],hardness=model.resistance[i];
-  const importance=demand*a/(.7+hardness*.11);
-  const candidate={i,x,y,z,layer,importance};
+  const center=model.index(x,y,z);
+  if(model.matter[center]!==1&&model.matter[center]!==2)continue;
+  const layer=model.layers[center];
+  // Sample a coarse territory, but place its endpoint at the local
+  // metabolic-demand maximum. Targets are NOT locked to x/y/z multiples of 3:
+  // the old regular lattice created visibly repetitive straight connections.
+  let chosen=null,rank=-Infinity;
+  for(let dz=-1;dz<=1;dz++)for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
+   const xx=x+dx,yy=y+dy,zz=z+dz,i=model.index(xx,yy,zz);
+   if(model.layers[i]!==layer)continue;
+   if(model.matter[i]!==1&&model.matter[i]!==2)continue;
+   const af=affinity[i];
+   if(af<.3)continue;
+   const relevance=model.demand[i]*af/(.7+model.resistance[i]*.11);
+   const quality=relevance-(dx*dx+dy*dy+dz*dz)*.011;
+   if(quality>rank){rank=quality;chosen={i,x:xx,y:yy,z:zz,layer,importance:relevance};}
+  }
+  if(!chosen)continue;
+  const candidate=chosen;
+  const importance=candidate.importance;
   let group=zones.get(layer);
   if(!group){group={candidates:[],weight:0};zones.set(layer,group)}
   group.candidates.push(candidate);
