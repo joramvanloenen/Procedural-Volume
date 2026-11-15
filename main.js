@@ -214,6 +214,11 @@ function bind(){
  slider('opacity','opacityValue',n=>n+'%',n=>uniforms.uOpacity.value=n/100);
  slider('slice','sliceValue',n=>n+'%',n=>uniforms.uClip.value=n/50-1);
  $('zoneSelect').addEventListener('change',()=>{uniforms.uIsolateZone.value=+$('zoneSelect').value;});
+ $('renderScale').addEventListener('change',()=>{
+  if(!renderer)return;
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,Number($('renderScale').value)));
+  resize();
+ });
  $('regenerate').addEventListener('click',begin);$('restart').addEventListener('click',begin);
  $('randomize').addEventListener('click',()=>{
   settings.seed=1+Math.floor(Math.random()*999998);$('seed').value=settings.seed;begin();
