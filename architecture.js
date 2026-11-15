@@ -204,6 +204,7 @@ for(let z=-1;z<=1;z++)for(let y=-1;y<=1;y++)for(let x=-1;x<=1;x++){
 const orders3=[[0,1,2],[0,2,1],[1,0,2],[1,2,0],[2,0,1],[2,1,0]];
 function legal(model,type,i){
  const m=model.matter[i];
+ if(model.reservedVesselType?.[i]&&model.reservedVesselType[i]!==type)return false;
  return m===1||m===2||m===type;
 }
 // Only a physical face-linked staircase is added where a diagonal segment
