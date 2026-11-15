@@ -1,4 +1,4 @@
-import {voxelizeCurve} from './vascular-geometry.js?v=curved-perfusion-20261115';
+import {voxelizeCurve} from './vascular-geometry.js?v=curved-perfusion-20261115-r2';
 // Anatomical zonation and demand-guided 3D vascular layout.
 // Educational organ-specific templates, not clinical reconstructions.
 //
