@@ -10,6 +10,7 @@ const state=()=>{
   coverage:m.coverage,perfused:m.perfused,
   lumenCount:m.lumenCount,capillaryCount:m.capillaryCount,
   wallCount:m.wallCount,flowingVoxels:m.flowingVoxels,
+  hairVenuleCount:m.hairVenuleCount,hairBranchCount:m.hairBranchCount,
   diagonalArterySteps:m.diagonalArterySteps,diagonalVeinSteps:m.diagonalVeinSteps,
   occupied:m.occupied,pressureIterations:m.pressureIterations||0,
   trunkVoxels:m.trunkVoxels,regionMetrics:m.layerMetrics(),
@@ -22,10 +23,12 @@ function snapshot(){
  const field=model.fieldBytes.slice(),material=model.materialBytes.slice(),flow=model.flowBytes.slice(),layers=model.layerBytes.slice();
  const changed=model.smoothedVersion!==lastVesselVersion;
  const vessel=changed?model.smoothVesselBytes.slice():null;
+ const hair=changed?model.hairVoxels.slice():null;
  if(changed)lastVesselVersion=model.smoothedVersion;
  const transfers=[field.buffer,material.buffer,flow.buffer,layers.buffer];
  if(vessel)transfers.push(vessel.buffer);
- postMessage({kind:'snapshot',stats:state(),field,material,flow,layers,vessel},transfers);
+ if(hair)transfers.push(hair.buffer);
+ postMessage({kind:'snapshot',stats:state(),field,material,flow,layers,vessel,hair},transfers);
 }
 function halt(){if(timer)clearInterval(timer);timer=null;model=null;}
 function start(settings){
