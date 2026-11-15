@@ -35,14 +35,17 @@ export function tissueProfile(organ,x,y,z,depth,noise){
  }else if(organ==='liver'){
   // Staggered lobular territories with a central venous core and peripheral
   // portal territories. At 64^3 this is a mesoscopic, not cellular, lobule.
-  const cellSize=.34;
-  const cx=Math.round((x+.06)/cellSize)*cellSize-.06;
-  const cy=Math.round((y-.04)/cellSize)*cellSize+.04;
-  const cz=Math.round((z+.02)/cellSize)*cellSize-.02;
-  const r=Math.hypot(x-cx,y-cy,(z-cz)*.93);
+  const cellSize=.38, rowSpacing=cellSize*Math.sqrt(3)/2;
+  const row=Math.round((y+.025)/rowSpacing);
+  const columnShift=(Math.abs(row)%2)*.5;
+  const cx=(Math.round((x+.02)/cellSize-columnShift)+columnShift)*cellSize-.02;
+  const cy=row*rowSpacing-.025;
+  const r=Math.hypot(x-cx,y-cy);
+  // Lobules form columns in Z: central veins are longitudinal channels and
+  // portal triads occupy the outer hexagonal lattice between lobules.
   if(depth<.046){zone=ZONE.CAPSULE;density=.85;demand=.12;resistance=4.2;supply=.05;drain=.05;}
   else if(r<.070){zone=ZONE.CENTRAL_VEIN;density=.53;demand=.69;resistance=.68;supply=.25;drain=3.6;}
-  else if(r>.215){zone=ZONE.PORTAL;density=.78;demand=.68;resistance=.73;supply=3.6;drain=.25;}
+  else if(r>.16){zone=ZONE.PORTAL;density=.78;demand=.68;resistance=.73;supply=3.6;drain=.25;}
   else{zone=ZONE.HEPATOCYTES;density=.70;demand=1.05;resistance=1.18;supply=1.25;drain=1.25;}
  }else if(organ==='lung'){
   // Bronchovascular bundles near conducting airways, low-density alveolar
