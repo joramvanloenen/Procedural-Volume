@@ -231,6 +231,19 @@ function bind(){
  });
  for(let name of ['showVolume','showArteries','showVeins','showCapillaries','showTracers'])$(name).addEventListener('change',visibility);
  document.querySelectorAll('[data-mode]').forEach(b=>b.addEventListener('click',()=>modeChanged(['mri','oxygen','structure','flow','layers'].indexOf(b.dataset.mode))));
+ const preset=(veinsOnly)=>{
+  $('showVolume').checked=!veinsOnly;
+  $('showArteries').checked=!veinsOnly;
+  $('showVeins').checked=true;
+  $('showCapillaries').checked=!veinsOnly;
+  $('showTracers').checked=!veinsOnly;
+  visibility();
+  $('veinsOnly').classList.toggle('active',veinsOnly);
+  $('allSystems').classList.toggle('active',!veinsOnly);
+  modeChanged(veinsOnly?2:0);
+ };
+ $('veinsOnly').addEventListener('click',()=>preset(true));
+ $('allSystems').addEventListener('click',()=>preset(false));
  $('resetView').addEventListener('click',()=>{
   camera.position.set(2.8,1.22,3.3);controls.target.set(0,0,0);controls.update();
  });
