@@ -22,11 +22,36 @@ Additional 3D scalar/vector fields: **matter density**, **metabolic oxygen deman
 
 The GPU ray marcher samples class, matter and flow textures, revealing actual voxel lumens and vessel walls, not tube geometry. You can hide low-density material with the cutoff slider, adjust opacity, use a section plane, and view tissue oxygen or blood flow.
 
-## Embryonic vessel growth
+## Layered, purpose-driven organ morphogenesis
 
-Arterial and venous tips explore **all 26 neighboring 3D voxels**, including diagonals, following unmet metabolic demand and their previous growth direction. Each diagonal tip deposits intermediate face-connected lumen voxels: even a corner-to-corner growth step produces a physically connected channel that the six-face flow solver can traverse. A spatial flood-distance pass identifies regions that need a capillary connection. Those regions are linked back through *contiguous* fluid-voxel channels to both arterial and venous matter. Vessel-wall material encapsulates all lumen boundaries after growth. Different cell and organ matter densities control their oxygen demand.
+The generator now uses **an anatomical zoning volume** alongside the matter and fluid volumes. Each voxel carries an organ-specific structural label, cell density, metabolic demand, extracellular matrix resistance, and arterial/venous affinity. Zoning changes the actual 3D tissue field, not merely its displayed color.
 
-Morphologies: kidney, liver, heart, lung, and an experimental organoid. They are stylized forms, not medical reconstructions.
+| Organ | Functional compartments | Structural vascular plan |
+| --- | --- | --- |
+| **Kidney** | Fibrous capsule, metabolically active cortex, lower-demand medullary pyramids, renal columns | Arterial supply prioritizes the cortex; interlobar/column corridors and lower-density medulla carry return branches and straight medullary connections. Cortex requires greater exchange coverage than the medulla. |
+| **Liver** | Outer capsule, hexagonal hepatic lobule columns, portal territories, central venous territories | Inflow preferentially reaches portal territories; venous drainage converges on the longitudinal central-vein axes; sinusoid-like capillary links cross hepatocyte-rich tissue. |
+| **Lung** | Pleura, bronchovascular connective tissue, alveolar parenchyma | Arterial branches prefer bronchovascular corridors; veins emphasize alveolar/intersegmental drainage, plus peripheral territories. Pulmonary arterial blood starts less oxygenated; alveolar tissue exchanges oxygen with capillary fluid. |
+| **Heart** | Epicardium, high-demand myocardium, endocardium | Surface coronary branches feed penetrating myocardial channels; surface vessels also collect venous return. Myocardial capillary spacing is tighter to supply densely packed muscle. |
+| **Organoid** | Highly active proliferating shell, interstitial matrix, less-active central core | A metabolically expensive growing rim receives most new targets; a lower-demand interior remains distinguishable from healthy tissue. |
+
+The morphology templates are **research-inspired approximations**, not anatomically precise micro-CT reconstructions. Their local layer labels are computational control fields rather than measured histology.
+
+### Demand-directed routing
+
+1. **Choose arterial and venous territories separately.** A functional quota assigns the organ's tissue zones their own supply and drainage targets. A hepatic central vein can have high drainage importance even when its zone occupies little volume.
+2. **Route along a 3D tissue-resistance cost field.** A multi-source, weighted shortest-path search connects each target to the *lowest-cost point of the existing tree*. Tissue density, compartment resistance, path length and supply/drainage affinity determine where voxels become vascular lumens. Paths remain face-connected; macroscopic branches may run diagonally.
+3. **Mature high-flow trunks.** Each target's metabolic workload accumulates up its parent path; heavily loaded arterial and venous parents widen into larger lumen regions, while fine terminals stay smaller.
+4. **Bridge the exchange regions.** Metabolic demand, oxygen deficit and transport cost select capillary bed sites. Their paths join the arterial and venous matter volumes rather than becoming disconnected decorative branches.
+5. **Solve pressure and advect dissolved contents.** The shared 3D pressure field moves fluid dye and plasma through lumen voxels. Neighbor-dependent oxygen/nutrient diffusion updates regional viability.
+
+The resulting network is *purpose-guided and locally cost-aware*, but it does **not** solve a global optimum of energy consumption, blood viscosity, endothelial shear stress or tissue mechanics. This is a biologically motivated procedural model, not a complete embryogenesis engine.
+
+### Anatomical sources
+
+- [NCBI: renal blood supply, cortex, medulla and interlobar/arcuate organization](https://www.ncbi.nlm.nih.gov/books/NBK482385/)
+- [AASLD: hepatic lobules, portal tracts, central veins and directed blood flow](https://www.aasld.org/liver-fellow-network/core-series/pathology-pearls/normal-liver-histology-101)
+- [NCBI: pulmonary arteries alongside bronchioles and intersegmental venous drainage](https://www.ncbi.nlm.nih.gov/books/NBK545205/)
+- [Hepatic metabolic zonation and sinusoidal gradients](https://pmc.ncbi.nlm.nih.gov/articles/PMC5257182/)
 
 ## Volumetric fluid dynamics
 
@@ -50,10 +75,11 @@ This is a **simplified pressure-driven low-Reynolds-number vascular fluid model,
 - **Oxygen:** color tissue according to local oxygen content.
 - **Anatomy:** material-class anatomy view, including vessel walls.
 - **Flow:** pressure-based fluid colors and advected dye moving through lumens.
+- **Layers:** compartment color map and an isolate-layer selector, so you can hide everything except cortex, medulla, portal areas, alveoli, myocardium, etc.
 - **Volume toggles:** show/hide tissues, arterial voxels, venous voxels, capillary voxels, and dye independently.
 - **Growth:** organ morphology, seed, branch proliferation, tissue heterogeneity, diffusion range, playback and viscosity controls.
 - **Scanner:** density cutoff, opacity, Z cut plane, orbit/pan/zoom, and PNG screenshot.
-- **Telemetry:** oxygen coverage, capillary/lumen voxel count, flowing voxels and perfused tissue.
+- **Telemetry:** global viability, per-layer oxygen coverage, lumen occupancy by anatomical compartment, arterial/venous routes, and flowing voxel count.
 
 ## Development
 
@@ -69,7 +95,7 @@ Open [http://localhost:8000](http://localhost:8000). You need a modern browser w
 npm test
 \`\`\`
 
-They verify all five morphologies, diagonal growth and physical 6-neighbor connectivity, conservation of inlet/outlet volume flux, no dye leakage into tissue, oxygen diffusion, and actual lumen-wall materials.
+Tests verify all five organ morphologies and their layers, organ-specific supply/drainage destinations, diagonal macroscopic routes, face-connected voxel circulation, inlet/outlet mass conservation, advected dye, oxygen exchange and encapsulating walls.
 
 ## Research background
 
