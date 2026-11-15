@@ -6,7 +6,7 @@
 // finite-volume pressure/transport model (not a full Navier-Stokes solver).
 import {applyArchitecture,buildRegionalTargets,integrateVesselRoute,ZONE} from './architecture.js?v=curved-perfusion-20261115-r2';
 import {DIRECTIONS_26,voxelizeCurve} from './vascular-geometry.js?v=curved-perfusion-20261115-r2';
-export const GRID=64;
+export const GRID=80;
 const N=GRID, N2=N*N, SIZE=N*N*N;
 const clamp=(x,a,b)=>Math.min(b,Math.max(a,x));
 const mix=(a,b,t)=>a+(b-a)*t;
@@ -274,7 +274,7 @@ export class VolumeModel{
  connectThrough(i,dA,dV){
   const a=this.pathFrom(i,dA,MAT.ARTERY),
     b=this.pathFrom(i,dV,MAT.VEIN);
-  if(!a||!b||a.length+b.length>56)return false;
+  if(!a||!b||a.length+b.length>70)return false;
   // Convert independent curved guides into the same material lattice.
   // Each short arc joins the existing inlet/outlet tree by physical
   // fluid voxels; there is no hidden conduit or graph-edge flow.
@@ -338,7 +338,7 @@ export class VolumeModel{
      const xx=x+dx,yy=y+dy,zz=z+dz,i=this.index(xx,yy,zz);
      const matter=this.matter[i];
      if(matter!==MAT.TISSUE&&matter!==MAT.DENSE)continue;
-     if(dA[i]>30||dV[i]>30)continue;
+     if(dA[i]>38||dV[i]>38)continue;
      const layer=this.layers[i];
      if(layer!==centerLayer)continue;
      if(layer===ZONE.CAPSULE||layer===ZONE.PLEURA||
@@ -469,7 +469,7 @@ export class VolumeModel{
     dist[j]=d;q[tail++]=j;
    }
   }
-  let reach=2.2+this.settings.reach*.12,covered=0,perf=0,voxels=0;
+  let reach=(2.2+this.settings.reach*.12)*(N/64),covered=0,perf=0,voxels=0;
   for(let i=0;i<SIZE;i++){
    let t=this.matter[i];if(!t||this.isFluid(i))continue;
    voxels++;
