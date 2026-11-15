@@ -29,3 +29,43 @@
  .viewport-bottom>div:first-child{width:100%;font-size:7px;opacity:.72}
  .viewer-quick{margin-left:auto;gap:6px}
  .viewport-bottom .viewer-quick button{padding:7px 6px;font-size:8px}}
+
+/* Scanner controls live directly beneath the volume they manipulate. */
+.viewer-column{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-color:#314b49 transparent;scrollbar-width:thin}
+.viewer-column>.viewport{flex:1 1 auto;min-height:300px}
+.viewer-controls{flex:0 0 auto;padding:16px 22px 15px;border-top:1px solid #395553;background:#111e23}
+.viewer-control-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
+.viewer-control-heading .section-title{margin:0;font-size:10px}
+.viewer-control-heading>small{color:#789f9b;font:9px 'DM Mono';letter-spacing:.04em;text-align:right}
+.viewer-controls .tab-group{margin:0 0 16px;max-width:none}
+.viewer-controls .tab-group button{min-height:34px}
+.viewer-controls-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px 20px;align-items:start}
+.viewer-controls-grid .control{min-width:0;margin:0}
+.viewer-controls-grid .range-note{min-height:0;margin-top:2px;font-size:9px}
+.viewer-controls-grid .range-title{gap:7px}
+.viewer-controls-grid .range-title label{font-size:10px}
+.viewer-controls-grid input[type=range]{margin:16px 0 10px;touch-action:pan-y;height:4px}
+.viewer-controls-grid input[type=range]::-webkit-slider-thumb{width:19px;height:19px}
+.viewer-controls-grid input[type=range]::-moz-range-thumb{width:17px;height:17px}
+.viewer-controls-grid .viewer-zone>label{display:block;margin:0 0 7px;color:#b6c8c2;font-size:10px}
+.viewer-controls-grid .select-wrap select{padding:8px 26px 8px 9px;font-size:10px}
+.viewer-controls-grid .select-wrap:after{top:4px}
+.viewer-visibility{margin-top:14px;border-top:1px solid #304446;padding-top:10px}
+.viewer-visibility>summary{cursor:pointer;color:#bbd8ca;list-style-position:inside;font:10px 'DM Mono';letter-spacing:.04em;user-select:none}
+.viewer-visibility>summary span{float:right;color:#72928d;font-size:9px}
+.viewer-toggle-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 24px;margin:15px 0 0}
+.viewer-toggle-grid .toggle-row{margin:0;font-size:10px}
+.viewer-toggle-grid .toggle-row span{gap:7px}
+@media(max-width:1250px){.viewer-controls-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 22px}
+ .viewer-toggle-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:650px){.viewer-column{order:0;min-height:0;overflow:visible;width:100%}
+ .viewer-column>.viewport{height:55vh;min-height:380px;flex:none}
+ .viewer-controls{padding:15px 17px 14px;border-bottom:1px solid var(--line)}
+ .viewer-controls-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:16px 20px}
+ .viewer-controls .tab-group{margin-bottom:16px}
+ .viewer-control-heading>small{font-size:8px}
+ .viewer-controls-grid .range-note{font-size:9px}
+ .viewer-visibility{margin-top:18px}}
+@media(max-width:375px){.viewer-controls-grid{column-gap:14px}
+ .viewer-controls-grid .range-title label{font-size:9px}
+ .viewer-controls{padding-left:13px;padding-right:13px}}
