@@ -1,4 +1,4 @@
-import {VolumeModel} from './simulation.js?v=scan-hires-20261115-r3';
+import {VolumeModel} from './simulation.js?v=hair-venules-20261115-r4';
 
 // Heavy voxel growth, pressure solve and advection run off the rendering thread.
 // Each update is a snapshot of 3D material/velocity/chemical textures.
