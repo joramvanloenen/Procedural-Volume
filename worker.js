@@ -11,15 +11,17 @@ const state=()=>{
   lumenCount:m.lumenCount,capillaryCount:m.capillaryCount,
   wallCount:m.wallCount,flowingVoxels:m.flowingVoxels,
   diagonalArterySteps:m.diagonalArterySteps,diagonalVeinSteps:m.diagonalVeinSteps,
-  occupied:m.occupied,pressureIterations:m.pressureIterations||0
+  occupied:m.occupied,pressureIterations:m.pressureIterations||0,
+  trunkVoxels:m.trunkVoxels,regionMetrics:m.layerMetrics(),
+  arteryTargets:m.growthSuccess?.[3]||0,veinTargets:m.growthSuccess?.[4]||0
  };
 };
 function snapshot(){
  if(!model)return;
  model.updateTexture();
- const field=model.fieldBytes.slice(),material=model.materialBytes.slice(),flow=model.flowBytes.slice();
- postMessage({kind:'snapshot',stats:state(),field,material,flow},
-  [field.buffer,material.buffer,flow.buffer]);
+ const field=model.fieldBytes.slice(),material=model.materialBytes.slice(),flow=model.flowBytes.slice(),layers=model.layerBytes.slice();
+ postMessage({kind:'snapshot',stats:state(),field,material,flow,layers},
+  [field.buffer,material.buffer,flow.buffer,layers.buffer]);
 }
 function halt(){if(timer)clearInterval(timer);timer=null;model=null;}
 function start(settings){
