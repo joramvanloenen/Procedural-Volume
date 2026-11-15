@@ -40,9 +40,10 @@ The morphology templates are **research-inspired approximations**, not anatomica
 
 1. **Choose arterial and venous territories separately.** A functional quota assigns the organ's tissue zones their own supply and drainage targets. A hepatic central vein can have high drainage importance even when its zone occupies little volume.
 2. **Route along a 3D tissue-resistance cost field.** A 26-direction weighted shortest-path search connects each target to the *lowest-cost point of the existing tree*. It uses Euclidean diagonal distances, compartment resistance, tissue density, and direction continuity. Each diagonal centerline segment gets face-connected intermediate lumen voxels so the pressure solver can carry fluid along it. Tests now count diagonals between **consecutive centerline voxels** rather than falsely counting diagonal endpoint offsets.
-3. **Mature high-flow trunks.** Each target's metabolic workload accumulates up its parent path; heavily loaded arterial and venous parents widen into larger lumen regions, while fine terminals stay smaller.
-4. **Bridge the exchange regions.** Metabolic demand, oxygen deficit and transport cost select capillary bed sites. Their paths join the arterial and venous matter volumes rather than becoming disconnected decorative branches.
-5. **Solve pressure and advect dissolved contents.** The shared 3D pressure field moves fluid dye and plasma through lumen voxels. Neighbor-dependent oxygen/nutrient diffusion updates regional viability.
+3. **Generate continuous curved centerlines, then fill the 3D voxel matter.** A Catmull–Rom curve interpolates the resistance-aware guide after local tangent relaxation and perpendicular steering away from dense matter. Sub-voxel samples stamp narrow cylindrical/spherical lumen neighborhoods into the 64³ material lattice, giving smooth branching without any tube mesh or 2D overlay. True 6-face fluid adjacency is tested and automatically repaired with short lumen links where needed.
+4. **Mature high-flow trunks.** Each territory contributes metabolic demand to parent supply/drainage branches; heavily loaded parent channels widen modestly without thickening every capillary into a rectangular block.
+5. **Bridge the exchange regions.** Exchange-bed sites move off the regular sampling lattice to local metabolic-demand maxima. Their short, curved 26-neighbor capillary conduits join existing arterial and venous lumen voxels. Capillary density is capped to avoid the prior rectilinear scaffolding.
+6. **Solve pressure and advect dissolved contents.** The shared 3D pressure field moves fluid dye and plasma through lumen voxels. Neighbor-dependent oxygen/nutrient diffusion updates regional viability.
 
 The resulting network is *purpose-guided and locally cost-aware*, but it does **not** solve a global optimum of energy consumption, blood viscosity, endothelial shear stress or tissue mechanics. This is a biologically motivated procedural model, not a complete embryogenesis engine.
 
@@ -76,6 +77,7 @@ This is a **simplified pressure-driven low-Reynolds-number vascular fluid model,
 - **Anatomy:** material-class anatomy view, including vessel walls.
 - **Flow:** pressure-based fluid colors and advected dye moving through lumens.
 - **Layers:** compartment color map and an isolate-layer selector, so you can hide everything except cortex, medulla, portal areas, alveoli, myocardium, etc.
+- **VEINS ONLY:** a mobile-friendly viewport button isolates the venous lumen so its branch curvature can be inspected without tissue, arteries or capillaries hiding it.
 - **Volume toggles:** show/hide tissues, arterial voxels, venous voxels, capillary voxels, and dye independently.
 - **Growth:** organ morphology, seed, branch proliferation, tissue heterogeneity, diffusion range, playback and viscosity controls.
 - **Scanner:** density cutoff, opacity, Z cut plane, orbit/pan/zoom, and PNG screenshot.
@@ -95,7 +97,7 @@ Open [http://localhost:8000](http://localhost:8000). You need a modern browser w
 npm test
 \`\`\`
 
-Tests verify all five organ morphologies and their layers, organ-specific supply/drainage destinations, **true 26-direction centerline moves**, smooth venous volume occupancy, face-connected voxel circulation, inlet/outlet mass conservation, advected dye, oxygen exchange and encapsulating walls.
+Tests verify all five organ morphologies and their layers, organ-specific supply/drainage destinations, **true 26-direction centerline moves**, curved centerline samples, independently targeted exchange beds, bounded capillary occupancy, smoothed venous 3D volume, face-connected voxel circulation, inlet/outlet mass conservation, advected dye, oxygen exchange and encapsulating walls.
 
 ## Research background
 
