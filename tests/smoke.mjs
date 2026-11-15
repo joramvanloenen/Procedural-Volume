@@ -71,6 +71,18 @@ for(const organ of organs){
  assert.ok(m.lumenCount>400,organ+' lacked lumen voxels');
  assert.ok(m.capillaryCount>100,organ+' lacked capillary voxels');
  assert.ok(m.wallCount>0,organ+' lacks voxel encapsulating vessel walls');
+ m.updateTexture();
+ assert.equal(m.smoothedVersion,m.geometryVersion,
+   organ+' smoothed vessel volume is not synchronized with the physics voxel grid');
+ let blurredNeighbors=0,solidVessels=0;
+ for(let i=0;i<m.size;i++){
+  const j=i*4;
+  if(m.isFluid(i))solidVessels++;
+  else if(m.matter[i]&&m.smoothVesselBytes[j+1]>15)blurredNeighbors++;
+ }
+ assert.ok(solidVessels>100&&blurredNeighbors>80,
+   organ+' lacks a continuous trilinear venous silhouette around centerlines');
+
  assert.ok(m.coverage>70,organ+' nutrient exchange does not cover enough tissue: '+m.coverage);
  assert.ok(m.flowingVoxels>0&&m.flowRate>0,organ+' fluid did not move');
  // Fluid connections are voxel neighborhood links, never graph/tube edges.
