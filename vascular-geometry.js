@@ -12,6 +12,7 @@ for(let z=-1;z<=1;z++)for(let y=-1;y<=1;y++)for(let x=-1;x<=1;x++){
 const clamp=(x,a,b)=>Math.min(b,Math.max(a,x));
 const sq=x=>x*x;
 function passable(m,i,type){
+ if(m.reservedVesselType?.[i]&&m.reservedVesselType[i]!==type)return false;
  const t=m.matter[i];
  return t===1||t===2||t===type||
   (type===5&&(t===3||t===4));
