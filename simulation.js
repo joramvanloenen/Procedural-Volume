@@ -1,8 +1,8 @@
 // Everything persistent is a voxel field. No procedural tube or vessel-edge meshes.
 // Voxel classes: 0 void, 1 parenchyma, 2 dense tissue, 3 arterial fluid,
 // 4 venous fluid, 5 capillary fluid, 6 encapsulating vessel wall.
-// Tissue sprouts are grown by 6-neighbor chemotaxis and capillary paths
-// are connected using 3D distance fields. Flow is a conservative face-flux
+// Tissue sprouts explore a 26-neighbor 3D neighborhood, with face-connected
+// voxel bridges for diagonals; capillary paths use 3D distance fields. Flow is a conservative face-flux
 // finite-volume pressure/transport model (not a full Navier-Stokes solver).
 export const GRID=64;
 const N=GRID, N2=N*N, SIZE=N*N*N;
@@ -11,6 +11,13 @@ const mix=(a,b,t)=>a+(b-a)*t;
 const smooth=t=>t*t*(3-2*t);
 const sq=x=>x*x;
 const step6=[1,-1,N,-N,N2,-N2];
+// Growth may choose any of 26 3D directions; mass transport still occurs
+// strictly across the six shared voxel faces to preserve a watertight lumen.
+const growthDirs=[];
+for(let dz=-1;dz<=1;dz++)for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
+ if(dx||dy||dz)growthDirs.push([dx,dy,dz]);
+}
+const routes3=[[0,1,2],[0,2,1],[1,0,2],[1,2,0],[2,0,1],[2,1,0]];
 export const MAT={VOID:0,TISSUE:1,DENSE:2,ARTERY:3,VEIN:4,CAPILLARY:5,WALL:6};
 function randomGenerator(seed){return()=>{let t=seed+=0x6d2b79f5;t=Math.imul(t^t>>>15,t|1);t^=t+Math.imul(t^t>>>7,t|61);return((t^t>>>14)>>>0)/4294967296};}
 export class VolumeModel{
@@ -38,6 +45,7 @@ export class VolumeModel{
   this.flowBytes=new Uint8Array(SIZE*4);
   this.occupied=0;this.lumenCount=0;this.capillaryCount=0;this.wallCount=0;
   this.inlet=-1;this.outlet=-1;this.tips=[];this.iteration=0;this.maxIterations=66;
+  this.diagonalVeinSteps=0;this.diagonalArterySteps=0;
   this.finished=false;this.coverage=0;this.perfused=0;this.flowingVoxels=0;this.flowRate=0;
   this.fluidTime=0;this.fluidClock=0;this.flowSolved=false;
   this.buildTissue();this.seedVessels();this.updateTexture();
@@ -142,52 +150,93 @@ export class VolumeModel{
    }
   }
  }
+ // For a diagonal step find a sequence of face-adjacent intermediate voxels.
+ // This bridges diagonal growth without introducing corner-only fluid connections:
+ // the six-face pressure solver and advected dye can traverse every new lumen.
+ diagonalBridge(tip,direction){
+  const axes=[];
+  if(direction[0])axes.push([direction[0],0,0]);
+  if(direction[1])axes.push([0,direction[1],0]);
+  if(direction[2])axes.push([0,0,direction[2]]);
+  if(axes.length===1)return [];
+  const orders=axes.length===2?[[0,1],[1,0]]:routes3;
+  let selected=null,bestCost=Infinity;
+  for(let order of orders){
+   let x=tip.x,y=tip.y,z=tip.z,indices=[],cost=0,valid=true;
+   // Only the intermediate voxels are converted here; the last hop
+   // is the target chosen by the growth rule itself.
+   for(let k=0;k<order.length-1;k++){
+    const d=axes[order[k]];x+=d[0];y+=d[1];z+=d[2];
+    if(!this.inside(x,y,z)){valid=false;break}
+    const i=this.index(x,y,z),matter=this.matter[i];
+    if(matter!==MAT.TISSUE&&matter!==MAT.DENSE&&matter!==tip.type){
+     valid=false;break;
+    }
+    indices.push(i);
+    cost+=matter===tip.type?.08:.45+.15*this.demand[i];
+   }
+   if(valid&&cost<bestCost){bestCost=cost;selected=indices;}
+  }
+  return selected;
+ }
  step(){
   if(this.finished)return false;
-  let proposed=[],limit=45+Math.round(this.settings.vascularity*1.05);
-  const choose6=[[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]];
-  let tipList=this.tips;
-  // Deterministic shuffle prevents a directional processing bias.
-  for(let i=tipList.length-1;i>0;i--){let j=Math.floor(this.rand()*(i+1));[tipList[i],tipList[j]]=[tipList[j],tipList[i]]}
+  const proposed=[],limit=45+Math.round(this.settings.vascularity*1.05);
+  const tipList=this.tips;
+  // Shuffling prevents propagation favoring early tips at intersections.
+  for(let i=tipList.length-1;i>0;i--){
+   let j=Math.floor(this.rand()*(i+1));
+   [tipList[i],tipList[j]]=[tipList[j],tipList[i]];
+  }
   const next=[],active=Math.min(tipList.length,limit);
   for(let n=0;n<active;n++){
-   let tip=tipList[n],best=-1,bestScore=-Infinity,bestDir=null;
-   for(let d of choose6){
-    let x=tip.x+d[0],y=tip.y+d[1],z=tip.z+d[2];
+   const tip=tipList[n];
+   let best=-1,bestScore=-Infinity,bestDir=null,bestBridge=null;
+   for(let d of growthDirs){
+    const x=tip.x+d[0],y=tip.y+d[1],z=tip.z+d[2];
     if(!this.inside(x,y,z))continue;
-    let i=this.index(x,y,z),type=this.matter[i];
-    if(type!==MAT.TISSUE&&type!==MAT.DENSE)continue;
-    let x2=x+d[0]*2,y2=y+d[1]*2,z2=z+d[2]*2;
-    let ahead=this.inside(x2,y2,z2)?this.index(x2,y2,z2):-1;
-    let dir=(tip.dx*d[0]+tip.dy*d[1]+tip.dz*d[2]);
-    // Sprouts are biased by unmet metabolic demand, direction persistence
-    // and the density of same-type neighboring voxels.
+    const i=this.index(x,y,z),matter=this.matter[i];
+    if(matter!==MAT.TISSUE&&matter!==MAT.DENSE)continue;
+    // An edge or corner neighbor must be connected back by one or two
+    // shared-face voxels; no crossing another vessel type or the exterior.
+    const bridge=this.diagonalBridge(tip,d);
+    if(!bridge)continue;
+    const aheadX=x+d[0],aheadY=y+d[1],aheadZ=z+d[2];
+    const ahead=this.inside(aheadX,aheadY,aheadZ)?this.index(aheadX,aheadY,aheadZ):-1;
+    const steps=Math.abs(d[0])+Math.abs(d[1])+Math.abs(d[2]);
+    const alignment=(tip.dx*d[0]+tip.dy*d[1]+tip.dz*d[2])/Math.sqrt(steps);
     let crowded=0;
-    for(let o of step6){
-     let neighbor=i+o;
-     if(this.matter[neighbor]===tip.type)crowded++;
+    for(let o of step6)if(this.matter[i+o]===tip.type)crowded++;
+    // Encourage naturally angled continuation. Demand and oxygen deficit
+    // still dominate; a slight diagonal bias avoids axis-aligned staircases.
+    const cost=bridge.reduce((sum,j)=>sum+(this.matter[j]===tip.type?0:1),0);
+    const score=.85*(1-this.oxygen[i])+.45*this.demand[i]+
+      .73*alignment-.13*crowded+.15*(steps-1)-.032*cost+
+      (ahead>=0&&this.matter[ahead]===tip.type?-.55:0)+this.rand()*.49;
+    if(score>bestScore){
+     bestScore=score;best=i;bestDir=d;bestBridge=bridge;
     }
-    let score=.85*(1-this.oxygen[i])+.45*this.demand[i]+.65*dir-.14*crowded+
-      (ahead>=0&&this.matter[ahead]===tip.type?-.55:0)+this.rand()*.57;
-    if(score>bestScore){bestScore=score;best=i;bestDir=d}
    }
    if(best<0)continue;
-   this.setFluid(best,tip.type);
+   for(let intermediary of bestBridge)this.setFluid(intermediary,tip.type);
+   if(!this.setFluid(best,tip.type))continue;
+   if(Math.abs(bestDir[0])+Math.abs(bestDir[1])+Math.abs(bestDir[2])>1){
+    if(tip.type===MAT.VEIN)this.diagonalVeinSteps++;
+    else this.diagonalArterySteps++;
+   }
    const [x,y,z]=this.xyz(best);
-   let dx=.71*tip.dx+.29*bestDir[0],dy=.71*tip.dy+.29*bestDir[1],dz=.71*tip.dz+.29*bestDir[2],norm=Math.hypot(dx,dy,dz)||1;
-   const newTip={x,y,z,type:tip.type,dx:dx/norm,dy:dy/norm,dz:dz/norm,age:tip.age+1};
-   next.push(newTip);
-   const chance=(.017+this.settings.vascularity*.00067);
+   const dx=.71*tip.dx+.29*bestDir[0],dy=.71*tip.dy+.29*bestDir[1],dz=.71*tip.dz+.29*bestDir[2];
+   const length=Math.hypot(dx,dy,dz)||1;
+   next.push({x,y,z,type:tip.type,dx:dx/length,dy:dy/length,dz:dz/length,age:tip.age+1});
+   const chance=.017+this.settings.vascularity*.00067;
    if(tip.age>2&&this.rand()<chance&&next.length<limit){
-    let r=this.rand()*Math.PI*2;
-    proposed.push({x,y,z,type:tip.type,dx:Math.cos(r),dy:this.rand()*1.4-.4,dz:Math.sin(r),age:0});
+    const angle=this.rand()*Math.PI*2;
+    proposed.push({x,y,z,type:tip.type,dx:Math.cos(angle),dy:this.rand()*1.4-.4,dz:Math.sin(angle),age:0});
    }
   }
   this.tips=next.concat(proposed).slice(0,limit);
   this.iteration++;
-  if(this.iteration>=this.maxIterations||(!this.tips.length&&this.iteration>10)){
-   this.finish();
-  }
+  if(this.iteration>=this.maxIterations||(!this.tips.length&&this.iteration>10))this.finish();
   return !this.finished;
  }
  // Multi-source 6-neighborhood flood distances. Nothing travels through air.
