@@ -13,6 +13,8 @@ for(const organ of organs){
  assert.ok(tissue>10000,organ+' lacked cellular matter');
  for(let step=0;step<100&&!m.finished;step++)m.step();
  assert.ok(m.finished,organ+' growth did not finish');
+ assert.ok(m.diagonalVeinSteps>20,organ+' venous growth regressed to axis-only directions');
+ assert.ok(m.diagonalArterySteps>20,organ+' arterial growth regressed to axis-only directions');
  assert.ok(m.lumenCount>400,organ+' lacked lumen voxels');
  assert.ok(m.capillaryCount>100,organ+' lacked capillary voxels');
  assert.ok(m.wallCount>0,organ+' lacks voxel encapsulating vessel walls');
