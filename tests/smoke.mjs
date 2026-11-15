@@ -71,6 +71,20 @@ for(const organ of organs){
  assert.ok(m.lumenCount>400,organ+' lacked lumen voxels');
  assert.ok(m.capillaryCount>100,organ+' lacked capillary voxels');
  assert.ok(m.wallCount>0,organ+' lacks voxel encapsulating vessel walls');
+ // The user's regression was a rectangular vascular scaffold even when
+ // target endpoints were diagonal. Verify the actual *curved rasterization*
+ // and that capillary beds do not multiply into a full rectilinear lattice.
+ for(const kind of [MAT.ARTERY,MAT.VEIN,MAT.CAPILLARY]){
+  const curve=m.curveStats?.[kind];
+  assert.ok(curve&&curve.segments>=10,
+   organ+' missing continuous vascular centerline samples for material '+kind);
+  assert.ok(curve.curvature/Math.max(1,curve.length)>.035,
+   organ+' rasterizer regressed to globally straight vascular guides '+kind);
+ }
+ assert.ok(m.bridges<170,organ+' excessive capillary ladders forming a voxel scaffold');
+ assert.ok(m.capillaryCount<m.occupied*.15,
+   organ+' capillary beds have overgrown the tissue as a rectangular grid');
+
  m.updateTexture();
  assert.equal(m.smoothedVersion,m.geometryVersion,
    organ+' smoothed vessel volume is not synchronized with the physics voxel grid');
