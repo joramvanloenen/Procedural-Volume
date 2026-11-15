@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {VolumeModel, GRID, MAT} from '../simulation.js';
-import {ZONE, ORGAN_LAYERS} from '../architecture.js';
+import {ZONE, ORGAN_LAYERS, routeInMatter, countRouteDirections} from '../architecture.js';
 
 const base={seed:38127,vascularity:72,heterogeneity:58,reach:65,viscosity:40};
 const neighbors=[1,-1,GRID,-GRID,GRID*GRID,-GRID*GRID];
@@ -46,6 +46,14 @@ for(const organ of organs){
 
  let tissue=0;for(const v of m.matter)if(v===MAT.TISSUE||v===MAT.DENSE)tissue++;
  assert.ok(tissue>10000,organ+' lacked cellular matter');
+ // Before growth, examine actual consecutive path coordinates.
+ // The old six-neighbor Dijkstra gave a false 'diagonal' telemetry reading
+ // when only its endpoints had different X,Y,Z values.
+ const initialVeinRoute=routeInMatter(m,MAT.VEIN,m.growthPlan[MAT.VEIN][1].i);
+ assert.ok(initialVeinRoute?.length>2,organ+' lacks a regional vein route');
+ const initialDirections=countRouteDirections(m,initialVeinRoute);
+ assert.ok(initialDirections.diagonal>0,
+   organ+' initial vein is still a staircase of axis-only segments');
  for(let step=0;step<100&&!m.finished;step++)m.step();
  assert.ok(m.finished,organ+' growth did not finish');
  assert.ok((m.growthSuccess[3]||0)>m.growthPlan[3].length*.55,
