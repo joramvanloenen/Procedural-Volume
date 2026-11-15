@@ -259,10 +259,35 @@ export function routeInMatter(model,type,target){
  if(state.stamp===4294967295){state.stamp=1;state.seen.fill(0);state.closed.fill(0);}
  const stamp=state.stamp,g=state.cost,parent=state.parent,
   seen=state.seen,closed=state.closed;
+ // A spatial A* guide keeps increased-resolution searches from
+ // exhausting a large organ before finding the existing vascular tree.
+ // A small sample of already connected lumen voxels supplies candidate
+ // meeting points; actual geometry and resistance still determine costs.
+ const sites=model.vesselSites?.[type]||[];
+ const tx=target%N,ty=Math.floor(target/N)%N,tz=Math.floor(target/(N*N));
+ const nearby=[];
+ const stride=Math.max(1,Math.floor(sites.length/256));
+ for(let k=0;k<sites.length;k+=stride){
+  const id=sites[k],x=id%N,y=Math.floor(id/N)%N,z=Math.floor(id/(N*N));
+  const d=(x-tx)**2+(y-ty)**2+(z-tz)**2;
+  if(nearby.length<5||d<nearby[nearby.length-1].d){
+   nearby.push({x,y,z,d});
+   nearby.sort((a,b)=>a.d-b.d);
+   nearby.length=Math.min(nearby.length,5);
+  }
+ }
+ const guidance=(x,y,z)=>{
+  let best=Infinity;
+  for(const p of nearby){
+   const d=Math.hypot(p.x-x,p.y-y,p.z-z);
+   if(d<best)best=d;
+  }
+  return Number.isFinite(best)?best*.75:0;
+ };
  const open=new BinaryHeap();
- seen[target]=stamp;g[target]=0;parent[target]=-1;open.push(target,0);
+ seen[target]=stamp;g[target]=0;parent[target]=-1;open.push(target,guidance(tx,ty,tz));
  let found=-1,steps=0;
- while(open.length&&steps++<140000){
+ while(open.length&&steps++<Math.min(SIZE,420000)){
   const item=open.pop(),i=item.node;
   if(closed[i]===stamp)continue;
   closed[i]=stamp;
@@ -292,7 +317,7 @@ export function routeInMatter(model,type,target){
    const bridgePenalty=bridge.reduce((v,k)=>v+(model.matter[k]===type?.004:.018*model.resistance[k]),0);
    const proposed=g[i]+d.len*matrix+turn+bridgePenalty;
    if(seen[j]===stamp&&proposed>=g[j])continue;
-   seen[j]=stamp;parent[j]=i;g[j]=proposed;open.push(j,proposed);
+   seen[j]=stamp;parent[j]=i;g[j]=proposed;open.push(j,proposed+guidance(xx,yy,zz));
   }
  }
  if(found<0)return null;
