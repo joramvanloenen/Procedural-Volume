@@ -365,6 +365,64 @@ export class VolumeModel{
   }
   this.bridges=created;
  }
+ // All blood is one physically face-connected volume: inlet -> capillary
+ // exchange beds -> venous outlet. Spline stamps can leave small side
+ // islands near reserved anatomical destinations, so rescue the minimal
+ // number of actual lumen voxels rather than inventing a graph connection.
+ ensureCirculation(){
+  const visited=new Uint8Array(SIZE),queue=new Int32Array(SIZE);
+  let count=0;
+  const flood=()=>{
+   let head=0,tail=0;visited.fill(0);
+   visited[this.inlet]=1;queue[tail++]=this.inlet;
+   while(head<tail){
+    const i=queue[head++];
+    const [x,y,z]=this.xyz(i);
+    if(!this.inside(x,y,z))continue;
+    for(const o of step6){
+     const j=i+o;
+     if(!visited[j]&&this.isFluid(j)){visited[j]=1;queue[tail++]=j;}
+    }
+   }
+   count=tail;
+  };
+  let repaired=0,created=0;
+  flood();
+  for(let pass=0;pass<30&&count<this.lumenCount;pass++){
+   const parents=new Int32Array(SIZE);parents.fill(-1);
+   const found=new Uint8Array(SIZE);
+   let head=0,tail=0;
+   for(let i=0;i<SIZE;i++){
+    if(visited[i]){found[i]=1;queue[tail++]=i;}
+   }
+   let target=-1;
+   while(head<tail&&target<0){
+    const i=queue[head++],[x,y,z]=this.xyz(i);
+    if(!this.inside(x,y,z))continue;
+    for(const o of step6){
+     const j=i+o;
+     if(found[j]||!this.matter[j])continue;
+     found[j]=1;parents[j]=i;
+     if(this.isFluid(j)){target=j;break;}
+     queue[tail++]=j;
+    }
+   }
+   if(target<0)break;
+   const route=[];let current=target;
+   while(current>=0&&!visited[current]&&route.length<SIZE){
+    if(!this.isFluid(current))route.push(current);
+    current=parents[current];
+   }
+   // Construct true 6-face lumen bridges, with no phantom edge connectivity.
+   for(const i of route.reverse())if(this.setFluid(i,MAT.CAPILLARY))created++;
+   repaired++;
+   flood();
+  }
+  this.connectedVoxels=count;
+  this.isolatedVoxels=this.lumenCount-count;
+  this.connectivityRepairs=repaired;
+  this.repairCapillaryVoxels=created;
+ }
  rebuildWall(){
   let walls=[];
   for(let i=N2+N+1;i<SIZE-N2-N-1;i++){
@@ -521,6 +579,7 @@ export class VolumeModel{
   this.matureTrunks();
   this.recomputeCoverage();
   this.connectCapillaryBeds(5);
+  this.ensureCirculation();
   this.rebuildWall();
   this.solvePressure();
   this.recomputeCoverage(true);
