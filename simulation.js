@@ -358,9 +358,9 @@ export class VolumeModel {
       let initial=e.type==='artery'?2.2:0;
       for(let k=0;k<=steps;k++){
         const t=k/steps;
-        let x=clamp(Math.round((mix(a.x,b.x)*.5+.5)*(N-1)),0,N-1);
-        let y=clamp(Math.round((mix(a.y,b.y)*.5+.5)*(N-1)),0,N-1);
-        let z=clamp(Math.round((mix(a.z,b.z)*.5+.5)*(N-1)),0,N-1);
+        let x=clamp(Math.round((mix(a.x,b.x,t)*.5+.5)*(N-1)),0,N-1);
+        let y=clamp(Math.round((mix(a.y,b.y,t)*.5+.5)*(N-1)),0,N-1);
+        let z=clamp(Math.round((mix(a.z,b.z,t)*.5+.5)*(N-1)),0,N-1);
         let i=this.index(x,y,z);
         if(this.density[i]>.08)dist[i]=Math.min(dist[i],initial);
       }
