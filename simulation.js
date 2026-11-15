@@ -482,23 +482,41 @@ export class VolumeModel{
   const dyeValue=.5+.5*Math.sin(this.fluidTime*3.2);
   dye[this.inlet]=dyeValue;plasma[this.inlet]=this.settings.organ==='lung'?.53:1;
   const dd=new Float32Array(SIZE),do2=new Float32Array(SIZE);
+  const outgoing=new Float32Array(SIZE);
   const speed=this.flowRate?(.23/this.flowRate)*pulse:0;
   const viscosity=clamp(this.settings.viscosity/100,0,1);
   const fluidMobility=1-.48*viscosity;
+  const fluxes=[this.faceX,this.faceY,this.faceZ],offsets=[1,N,N2];
+  // First pass: compute total outward volume per donor voxel.
+  // No source may advect more than its volume in a single timestep.
   for(let i=0;i<SIZE;i++){
    if(!this.isFluid(i))continue;
+   const x=i%N,y=Math.floor(i/N)%N,z=Math.floor(i/N2);
    for(let axis=0;axis<3;axis++){
-    const offset=[1,N,N2][axis];
-    const x=i%N,y=Math.floor(i/N)%N,z=Math.floor(i/N2);
     if((axis===0&&x>=N-1)||(axis===1&&y>=N-1)||(axis===2&&z>=N-1))continue;
-    const j=i+offset;
-    if(!this.isFluid(j))continue;
-    let q=[this.faceX,this.faceY,this.faceZ][axis][i]*speed*fluidMobility;
-    if(q===0)continue;
-    let donor=q>0?i:j,receiver=q>0?j:i,volume=clamp(Math.abs(q),0,.24);
-    let deltaD=volume*dye[donor],deltaO=volume*plasma[donor];
-    dd[donor]-=deltaD;dd[receiver]+=deltaD;
-    do2[donor]-=deltaO;do2[receiver]+=deltaO;
+    const j=i+offsets[axis];if(!this.isFluid(j))continue;
+    const flux=fluxes[axis][i]*speed*fluidMobility;
+    if(!flux)continue;
+    const donor=flux>0?i:j;
+    outgoing[donor]+=Math.min(.24,Math.abs(flux));
+   }
+  }
+  // Second pass: scale competing face fluxes for each donor, then apply
+  // equal and opposite transfers, conserving total tracer and oxygen mass.
+  for(let i=0;i<SIZE;i++){
+   if(!this.isFluid(i))continue;
+   const x=i%N,y=Math.floor(i/N)%N,z=Math.floor(i/N2);
+   for(let axis=0;axis<3;axis++){
+    if((axis===0&&x>=N-1)||(axis===1&&y>=N-1)||(axis===2&&z>=N-1))continue;
+    const j=i+offsets[axis];if(!this.isFluid(j))continue;
+    const flux=fluxes[axis][i]*speed*fluidMobility;
+    if(!flux)continue;
+    const donor=flux>0?i:j,receiver=flux>0?j:i;
+    const fraction=Math.min(.24,Math.abs(flux))*
+      Math.min(1,.82/Math.max(outgoing[donor],1e-9));
+    const dyeTransport=fraction*dye[donor],oxygenTransport=fraction*plasma[donor];
+    dd[donor]-=dyeTransport;dd[receiver]+=dyeTransport;
+    do2[donor]-=oxygenTransport;do2[receiver]+=oxygenTransport;
    }
   }
   for(let i=0;i<SIZE;i++){
@@ -506,6 +524,10 @@ export class VolumeModel{
    dye[i]=clamp((dye[i]+dd[i])*.999,0,1);
    plasma[i]=clamp(plasma[i]+do2[i],0,1);
   }
+  // The inflow is a fixed-concentration blood reservoir, not a finite voxel
+  // that permanently depletes after a few steps of circulation.
+  dye[this.inlet]=dyeValue;
+  plasma[this.inlet]=this.settings.organ==='lung'?.53:1;
   // Face exchange and tissue diffusion in the same 3D lattice.
   // Compute changes from the old field, then apply simultaneously.
   const oNext=new Float32Array(SIZE),nNext=new Float32Array(SIZE);
