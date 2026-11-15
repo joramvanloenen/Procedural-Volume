@@ -14,7 +14,7 @@
 <body>
 <div id="app">
   <header class="topbar">
-    <div class="brand"><div class="brand-mark"><span class="mark-a"></span><span class="mark-b"></span><span class="mark-c"></span></div><div><strong>PROCEDURAL<span class="brand-light">/VOLUME</span></strong><small>MORPHOGENESIS LAB <span class="ver">v0.3</span></small></div></div>
+    <div class="brand"><div class="brand-mark"><span class="mark-a"></span><span class="mark-b"></span><span class="mark-c"></span></div><div><strong>PROCEDURAL<span class="brand-light">/VOLUME</span></strong><small>MORPHOGENESIS LAB <span class="ver">v0.4</span></small></div></div>
     <div class="top-middle"><span class="status-dot"></span><span id="status">Initializing tissue simulation</span></div>
     <div class="top-actions"><button id="randomize" class="quiet-btn" title="New random seed">↻ <span>New seed</span></button><button id="screenshot" class="quiet-btn" title="Save an image of the viewer">⇩ <span>Capture</span></button><a class="github-link" href="https://github.com/joramvanloenen/Procedural-Volume" target="_blank" rel="noopener noreferrer">SOURCE ↗</a></div>
   </header>
@@ -56,6 +56,7 @@
         <div class="viewer-controls-grid">
         <div class="control scan-control"><div class="range-title"><label for="threshold">Density cutoff</label><output id="thresholdValue">0.32</output></div><input id="threshold" type="range" min="0" max="95" value="32"><div class="range-note">Hide voxels with lower scan intensity</div></div>
         <div class="control"><div class="range-title"><label for="opacity">Tissue opacity</label><output id="opacityValue">46%</output></div><input id="opacity" type="range" min="0" max="100" value="46"></div>
+        <div class="control"><div class="range-title"><label for="hairVisibility">Hair-thin vein visibility</label><output id="hairVisibilityValue">95%</output></div><input id="hairVisibility" type="range" min="0" max="100" value="95"><div class="range-note">Preserve fine venules through tissue and density cutoff</div></div>
         <div class="control"><div class="range-title"><label for="slice">Section / cut plane</label><output id="sliceValue">100%</output></div><input id="slice" type="range" min="0" max="100" value="100"><div class="range-note">Reveal anatomy along the Z axis</div></div><div class="control viewer-quality"><label for="renderScale">Display sharpness</label><div class="select-wrap"><select id="renderScale"><option value="1">Fast · 1×</option><option value="1.5">Balanced · 1.5×</option><option value="2" selected>Sharp · 2×</option></select></div><div class="range-note">Adjust rendering pixels without regenerating the organ</div></div>
         <div class="control viewer-zone"><label for="zoneSelect">Isolate anatomical layer</label><div class="select-wrap"><select id="zoneSelect"><option value="0">All tissue compartments</option></select></div><div class="range-note">Layers have independent cell density, demand and vascular affinity</div></div>
 
@@ -78,7 +79,7 @@
       <div class="separator"></div>
       <div class="inspector-item"><label>OXYGEN COVERAGE <span id="coverageState">COMPUTING</span></label><div class="big-metric"><span id="coverage">—</span><small>%</small></div><div class="metric-track"><div id="coverageFill"></div></div><p>Fraction of tissue above its simulated metabolic oxygen threshold.</p></div>
       <div class="separator"></div>
-      <div class="mini-stats"><div><label>VESSEL LUMEN VOXELS</label><strong id="segments">—</strong></div><div><label>CAPILLARY VOXELS</label><strong id="connections">—</strong></div><div><label>FLOWING VOXELS</label><strong id="flowloops">—</strong></div><div><label>PERFUSED VOLUME</label><strong id="perfused">—</strong></div><div><label>DIAGONAL VEIN GROWTH</label><strong id="diagonalVeins">—</strong></div><div><label>DIAGONAL ARTERY GROWTH</label><strong id="diagonalArteries">—</strong></div></div>
+      <div class="mini-stats"><div><label>VESSEL LUMEN VOXELS</label><strong id="segments">—</strong></div><div><label>CAPILLARY VOXELS</label><strong id="connections">—</strong></div><div><label>HAIRLINE VENULES</label><strong id="microbranches">—</strong></div><div><label>FLOWING VOXELS</label><strong id="flowloops">—</strong></div><div><label>PERFUSED VOLUME</label><strong id="perfused">—</strong></div><div><label>DIAGONAL VEIN GROWTH</label><strong id="diagonalVeins">—</strong></div><div><label>DIAGONAL ARTERY GROWTH</label><strong id="diagonalArteries">—</strong></div></div>
       <div class="separator"></div>
       <div class="legend-title">LOCAL MATTER DENSITY</div><div class="gradient-key"></div><div class="gradient-numbers"><span>LOW</span><span>MID</span><span>HIGH</span></div>
       <div class="separator"></div>
