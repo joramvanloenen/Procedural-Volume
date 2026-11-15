@@ -1,4 +1,4 @@
-import {VolumeModel} from './simulation.js?v=curved-perfusion-20261115';
+import {VolumeModel} from './simulation.js?v=curved-perfusion-20261115-r2';
 
 // Heavy voxel growth, pressure solve and advection run off the rendering thread.
 // Each update is a snapshot of 3D material/velocity/chemical textures.
