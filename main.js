@@ -4,9 +4,9 @@ import {VolumeModel, GRID} from './simulation.js';
 const $=id=>document.getElementById(id),clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const wrap=$('canvasWrap');
 const settings={organ:'kidney',seed:38127,vascularity:72,heterogeneity:58,reach:65,speed:2,viscosity:40};
-let model=null,renderer=null,scene=null,camera=null,controls=null,mesh=null;
+let snapshot=null,worker=null,renderer=null,scene=null,camera=null,controls=null,mesh=null;
 let fieldTex=null,classTex=null,flowTex=null;
-let playing=true,lastTime=performance.now(),growthTime=0,fluidTime=0,telemetryTime=0,generation=0;
+let playing=true,generation=0;
 const vertexShader="out vec3 vPosition;\nvoid main(){\n vPosition=position;\n gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);\n}";
 const fragmentShader="precision highp float;\nprecision highp sampler3D;\nin vec3 vPosition;\nout vec4 fragColor;\nuniform sampler3D uField;\nuniform sampler3D uClasses;\nuniform sampler3D uFlow;\nuniform vec3 uEye;\nuniform float uThreshold;\nuniform float uOpacity;\nuniform float uClip;\nuniform int uMode;\nuniform bool uShowTissue;\nuniform bool uShowArtery;\nuniform bool uShowVein;\nuniform bool uShowCapillary;\nuniform bool uShowDye;\nvoid main(){\n vec3 direction=normalize(vPosition-uEye);\n vec3 inv=1.0/direction;\n vec3 t0=(-vec3(1.0)-uEye)*inv;\n vec3 t1=(vec3(1.0)-uEye)*inv;\n vec3 nearT=min(t0,t1),farT=max(t0,t1);\n float entry=max(0.0,max(max(nearT.x,nearT.y),nearT.z));\n float exitT=min(min(farT.x,farT.y),farT.z);\n if(exitT<=entry)discard;\n vec4 accum=vec4(0.0);\n float stepLength=0.0205;\n float jitter=fract(sin(dot(gl_FragCoord.xy,vec2(12.9898,78.233)))*43758.5453);\n float t=entry+stepLength*jitter;\n for(int k=0;k<148;k++){\n  if(t>exitT||accum.a>.992)break;\n  vec3 p=uEye+t*direction;\n  t+=stepLength;\n  if(p.z>uClip)continue;\n  vec3 uv=clamp((p+1.0)*.5,vec3(.002),vec3(.998));\n  float material=floor(texture(uClasses,uv).r*255.0+.5);\n  if(material<.5)continue;\n  bool fluid=material>2.5&&material<5.5;\n  if(fluid&&((material<3.5&&!uShowArtery)||\n     (material>3.5&&material<4.5&&!uShowVein)||\n     (material>4.5&&!uShowCapillary)))continue;\n  if(!fluid&&!uShowTissue)continue;\n  vec4 f=texture(uField,uv);\n  float density=f.r;\n  float threshold=smoothstep(uThreshold-.018,uThreshold+.045,density);\n  if(threshold<.008)continue;\n  vec4 flow=texture(uFlow,uv);\n  float o2=f.g,dye=f.a,pressure=flow.a;\n  vec3 velocity=flow.rgb*2.0-1.0;\n  float speed=length(velocity);\n  float alpha=.014+.032*density;\n  vec3 color=vec3(.38,.49,.50)+density*vec3(.39,.37,.32);\n  if(material>1.5&&material<2.5)color+=vec3(.10,.08,.07);\n  if(material>5.5){color=vec3(.84,.77,.68);alpha*=1.28;}\n  if(fluid){\n   alpha=.21;\n   color=material<3.5?vec3(.94,.38,.29):\n        material<4.5?vec3(.28,.63,.86):vec3(1.0,.75,.52);\n   color*=.68+.26*o2;\n  }\n  if(uMode==0){\n   if(!fluid)color=mix(vec3(.23,.34,.40),vec3(.95,.96,.90),density);\n   else color=mix(vec3(.64,.72,.73),color,.63);\n   if(material>5.5)color=vec3(.95,.93,.86);\n  } else if(uMode==1){\n   float viability=smoothstep(.10,.80,o2);\n   color=mix(vec3(.95,.29,.23),vec3(.26,.95,.65),viability);\n   if(fluid)color=mix(color,vec3(.88,.98,.82),.26);\n  } else if(uMode==2){\n   if(!fluid){\n    color=mix(vec3(.40,.28,.31),vec3(.95,.74,.64),density);\n    if(material>5.5)color=vec3(.92,.67,.51);\n   }\n  } else {\n   if(!fluid){\n    color=mix(vec3(.16,.27,.31),vec3(.43,.57,.54),density);\n    alpha*=.40;\n   }else{\n    color=mix(vec3(.27,.70,1.0),vec3(1.0,.45,.28),pressure);\n    color=mix(color,vec3(1.0,.98,.70),clamp(dye*.82,0.0,.82));\n    color+=vec3(.16,.33,.25)*min(speed*2.0,.8);\n    alpha=.24;\n   }\n  }\n  if(fluid&&uShowDye){\n   float flash=smoothstep(.23,.9,dye);\n   color=mix(color,vec3(1.0,.91,.64),flash*(uMode==3?.47:.25));\n   alpha+=flash*.055;\n  }\n  if(!fluid)alpha*=uOpacity*.90;\n  alpha*=threshold;\n  alpha=clamp(alpha,0.0,.36);\n  accum.rgb+=(1.0-accum.a)*color*alpha;\n  accum.a+=(1.0-accum.a)*alpha;\n }\n if(accum.a<.003)discard;\n fragColor=vec4(accum.rgb/max(accum.a,.001),accum.a);\n}";
 const uniforms={
@@ -66,31 +66,31 @@ function data3d(buffer,channels,filter=THREE.LinearFilter){
  tex.unpackAlignment=1;tex.generateMipmaps=false;tex.needsUpdate=true;
  return tex;
 }
-function upload(){
- if(!model)return;
- model.updateTexture();
+function upload(message){
+ if(!message)return;
+ const field=message.field,material=message.material,flow=message.flow;
  if(!fieldTex){
-  fieldTex=data3d(model.fieldBytes,4);
-  classTex=data3d(model.materialBytes,1,THREE.NearestFilter);
-  flowTex=data3d(model.flowBytes,4);
+  fieldTex=data3d(field,4);
+  classTex=data3d(material,1,THREE.NearestFilter);
+  flowTex=data3d(flow,4);
   uniforms.uField.value=fieldTex;uniforms.uClasses.value=classTex;uniforms.uFlow.value=flowTex;
  }else{
-  fieldTex.image.data=model.fieldBytes;classTex.image.data=model.materialBytes;flowTex.image.data=model.flowBytes;
+  fieldTex.image.data=field;classTex.image.data=material;flowTex.image.data=flow;
   fieldTex.needsUpdate=true;classTex.needsUpdate=true;flowTex.needsUpdate=true;
  }
 }
 function updateStats(){
- if(!model)return;
- $('coverage').textContent=model.coverage.toFixed(1);
- $('coverageFill').style.width=clamp(model.coverage,0,100)+'%';
- $('coverageState').textContent=model.coverage>85?'WELL SUPPLIED':model.coverage>60?'PATCHY':'OXYGEN DEFICIT';
- $('segments').textContent=model.lumenCount.toLocaleString('en-US');
- $('connections').textContent=model.capillaryCount.toLocaleString('en-US');
- $('flowloops').textContent=model.finished?model.flowingVoxels.toLocaleString('en-US'):'—';
- $('perfused').textContent=model.perfused.toFixed(0)+'%';
- $('growthPercent').textContent=Math.round(model.iteration/model.maxIterations*100)+'%';
- $('growthFill').style.width=Math.round(model.iteration/model.maxIterations*100)+'%';
- if(model.finished){
+ if(!snapshot)return;
+ $('coverage').textContent=snapshot.coverage.toFixed(1);
+ $('coverageFill').style.width=clamp(snapshot.coverage,0,100)+'%';
+ $('coverageState').textContent=snapshot.coverage>85?'WELL SUPPLIED':snapshot.coverage>60?'PATCHY':'OXYGEN DEFICIT';
+ $('segments').textContent=snapshot.lumenCount.toLocaleString('en-US');
+ $('connections').textContent=snapshot.capillaryCount.toLocaleString('en-US');
+ $('flowloops').textContent=snapshot.finished?snapshot.flowingVoxels.toLocaleString('en-US'):'—';
+ $('perfused').textContent=snapshot.perfused.toFixed(0)+'%';
+ $('growthPercent').textContent=Math.round(snapshot.iteration/snapshot.maxIterations*100)+'%';
+ $('growthFill').style.width=Math.round(snapshot.iteration/snapshot.maxIterations*100)+'%';
+ if(snapshot.finished){
   $('status').textContent='Voxel fluid transport active';
   $('networkState').textContent='3D pressure-driven circulation';
   $('networkDescription').textContent='Fluid velocity and pressure live in each lumen voxel; oxygen diffuses through surrounding cells.';
@@ -103,48 +103,34 @@ function updateStats(){
 function begin(){
  if(!renderer)return;
  const request=++generation;
- playing=true;growthTime=0;fluidTime=0;telemetryTime=0;
- $('playPause').textContent='Ⅱ Pause';
+ playing=true;$('playPause').textContent='Ⅱ Pause';
  $('loadingTitle').textContent='Seeding matter voxels';
- $('loadingText').textContent='Allocating 3D tissue, lumen and pressure fields';
+ $('loadingText').textContent='Allocating tissue, plasma and vessel-wall materials in 3D';
  $('loading').classList.remove('hidden');
  $('regenerate').disabled=true;
- requestAnimationFrame(()=>setTimeout(()=>{
+ if(worker)worker.terminate();
+ worker=new Worker(new URL('./worker.js',import.meta.url),{type:'module'});
+ snapshot=null;
+ $('specimenName').textContent=settings.organ.toUpperCase()+' / VOXEL SPECIMEN '+settings.seed;
+ $('resLabel').textContent=GRID+'³ VOXEL FIELD';
+ worker.onmessage=({data})=>{
   if(request!==generation)return;
-  try{
-   model=new VolumeModel(settings);
-   $('specimenName').textContent=settings.organ.toUpperCase()+' / VOXEL SPECIMEN '+settings.seed;
-   $('resLabel').textContent=GRID+'³ VOXEL FIELD';
-   upload();updateStats();$('loading').classList.add('hidden');
-  }catch(err){showError('Could not generate volume: '+err.message);}
-  finally{$('regenerate').disabled=false;}
- },24));
+  if(data.kind==='error'){showError(data.message);$('regenerate').disabled=false;return;}
+  if(data.kind==='phase'){$('status').textContent=data.text;return;}
+  if(data.kind!=='snapshot')return;
+  snapshot=data.stats;upload(data);updateStats();
+  $('loading').classList.add('hidden');$('regenerate').disabled=false;
+ };
+ worker.onerror=err=>{
+  if(request!==generation)return;
+  showError('Voxel simulation worker failed: '+err.message);
+  $('regenerate').disabled=false;
+ };
+ worker.postMessage({kind:'start',settings:{...settings}});
 }
-function advance(dt){
- if(!model||!playing)return;
- if(!model.finished){
-  growthTime+=dt*(3+settings.speed*7);
-  let steps=0;
-  while(growthTime>=1&&steps<4&&!model.finished){
-   model.step();steps++;growthTime-=1;
-   if(model.iteration%3===0||model.finished){upload();updateStats();}
-  }
- }else{
-  fluidTime+=dt*Math.max(.5,settings.speed*.65);
-  telemetryTime+=dt;
-  if(fluidTime>=1/14){
-   const elapsed=Math.min(.14,fluidTime);
-   model.advanceFluid(elapsed);
-   upload();fluidTime=0;
-  }
-  if(telemetryTime>.50){updateStats();telemetryTime=0;}
- }
-}
-function animate(t){
+function animate(){
  requestAnimationFrame(animate);
  if(!renderer)return;
- const dt=Math.min(.06,Math.max(0,(t-lastTime)/1000));lastTime=t;
- advance(dt);
  uniforms.uEye.value.copy(camera.position);
  controls.update();renderer.render(scene,camera);
 }
@@ -175,10 +161,10 @@ function bind(){
  slider('heterogeneity','heterogeneityValue',n=>n+'%',n=>settings.heterogeneity=n);
  slider('reach','reachValue',n=>n+'%',n=>{
   settings.reach=n;
-  if(model){model.settings.reach=n;model.recomputeCoverage(true);upload();updateStats();}
+  if(worker)worker.postMessage({kind:'reach',value:n});
  });
- slider('speed','speedValue',n=>n+'×',n=>settings.speed=n);
- slider('viscosity','viscosityValue',n=>n+'%',n=>{settings.viscosity=n;if(model)model.settings.viscosity=n});
+ slider('speed','speedValue',n=>n+'×',n=>{settings.speed=n;if(worker)worker.postMessage({kind:'speed',speed:n})});
+ slider('viscosity','viscosityValue',n=>n+'%',n=>{settings.viscosity=n;if(worker)worker.postMessage({kind:'viscosity',value:n})});
  slider('threshold','thresholdValue',n=>(n/100).toFixed(2),n=>uniforms.uThreshold.value=n/100);
  slider('opacity','opacityValue',n=>n+'%',n=>uniforms.uOpacity.value=n/100);
  slider('slice','sliceValue',n=>n+'%',n=>uniforms.uClip.value=n/50-1);
@@ -195,6 +181,7 @@ function bind(){
  $('heterogeneity').addEventListener('change',begin);
  $('playPause').addEventListener('click',()=>{
   playing=!playing;$('playPause').textContent=playing?'Ⅱ Pause':'▷ Play';
+  if(worker)worker.postMessage({kind:'pause',playing});
   $('status').textContent=playing?'Simulation active':'Simulation paused';
  });
  for(let name of ['showVolume','showArteries','showVeins','showCapillaries','showTracers'])$(name).addEventListener('change',visibility);
