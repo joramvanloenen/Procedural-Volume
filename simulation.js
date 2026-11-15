@@ -37,7 +37,7 @@ export class VolumeModel{
   this.materialBytes=new Uint8Array(SIZE);
   this.flowBytes=new Uint8Array(SIZE*4);
   this.occupied=0;this.lumenCount=0;this.capillaryCount=0;this.wallCount=0;
-  this.inlet=-1;this.outlet=-1;this.tips=[];this.iteration=0;this.maxIterations=85;
+  this.inlet=-1;this.outlet=-1;this.tips=[];this.iteration=0;this.maxIterations=66;
   this.finished=false;this.coverage=0;this.perfused=0;this.flowingVoxels=0;this.flowRate=0;
   this.fluidTime=0;this.fluidClock=0;this.flowSolved=false;
   this.buildTissue();this.seedVessels();this.updateTexture();
@@ -144,7 +144,7 @@ export class VolumeModel{
  }
  step(){
   if(this.finished)return false;
-  let proposed=[],limit=250+Math.round(this.settings.vascularity*4);
+  let proposed=[],limit=45+Math.round(this.settings.vascularity*1.05);
   const choose6=[[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]];
   let tipList=this.tips;
   // Deterministic shuffle prevents a directional processing bias.
@@ -251,7 +251,7 @@ export class VolumeModel{
     candidates.push({x,y,z,i,score});
    }
    candidates.sort((a,b)=>b.score-a.score);
-   let chosen=[],budget=round===0?45:32;
+   let chosen=[],budget=round===0?48:36;
    for(let c of candidates){
     if(chosen.length>=budget)break;
     if(selected.some(p=>sq(p.x-c.x)+sq(p.y-c.y)+sq(p.z-c.z)<25))continue;
@@ -279,7 +279,7 @@ export class VolumeModel{
   }
   for(let j of walls){
    if(this.matter[j]===MAT.TISSUE||this.matter[j]===MAT.DENSE){
-    this.matter[j]=MAT.WALL;this.density[j]=clamp(this.density[j]+.18,.2,1);
+    this.matter[j]=MAT.WALL;this.density[j]=clamp(this.density[j]+.18,.2,1);this.wallCount++;
    }
   }
  }
@@ -379,7 +379,7 @@ export class VolumeModel{
  finish(){
   if(this.finished)return;
   this.recomputeCoverage();
-  this.connectCapillaryBeds(5);
+  this.connectCapillaryBeds(6);
   this.rebuildWall();
   this.solvePressure();
   this.recomputeCoverage(true);
