@@ -1,3 +1,4 @@
+import {voxelizeCurve} from './vascular-geometry.js';
 // Anatomical zonation and demand-guided 3D vascular layout.
 // Educational organ-specific templates, not clinical reconstructions.
 //
@@ -296,35 +297,27 @@ export function countRouteDirections(model,path){
  return {diagonal,axis};
 }
 
+// Use the resistance-aware guide only to choose circulation destinations.
+// The actual spatial vessel is a curved 3D voxel field, not a stair-step
+// polyline of filled grid edges.
 export function integrateVesselRoute(model,type,target){
  const path=routeInMatter(model,type,target);
  if(!path||path.length<2)return false;
  const counts=countRouteDirections(model,path);
- let newly=0,parent=path[0],terminal=parent;
- for(let step=1;step<path.length;step++){
-  const next=path[step];
-  // Diagonal centerline segments must also provide a physically traversable
-  // 6-neighbor bridge, without changing the route's intended smooth direction.
-  const bridge=faceConnector(model,type,parent,next);
-  if(!bridge)return false;
-  for(const j of [...bridge,next]){
-   if(model.matter[j]===type){parent=j;terminal=j;continue;}
-   if(model.setFluid(j,type)){
-    model.vesselSites[type].push(j);
-    model.branchParent[j]=parent;
-    parent=j;terminal=j;newly++;
-   }
-  }
- }
- if(newly){
-  model.branchLoad[terminal]+=model.demand[target]*
-   (type===3?model.supplyAffinity[target]:model.drainAffinity[target]);
-  // These count actual diagonal 3D centerline segments, not endpoint offsets.
+ const result=voxelizeCurve(model,type,path,{
+  radius:(t)=>1.02+Math.sin(t*Math.PI)*.09,
+  register:true,
+  work:model.demand[target]*(type===3?model.supplyAffinity[target]:model.drainAffinity[target]),
+  strength:1.25
+ });
+ if(result.newVoxels){
+  // Meaningful direction statistics now refer to consecutive guided points,
+  // while curveStats explicitly capture 3D bend and length.
   if(type===4)model.diagonalVeinSteps+=counts.diagonal;
   else model.diagonalArterySteps+=counts.diagonal;
   if(!model.branchRouteStats)model.branchRouteStats={3:{diagonal:0,axis:0},4:{diagonal:0,axis:0}};
   model.branchRouteStats[type].diagonal+=counts.diagonal;
   model.branchRouteStats[type].axis+=counts.axis;
  }
- return newly>0;
+ return result.newVoxels>0;
 }
