@@ -24,7 +24,7 @@ The GPU ray marcher samples class, matter and flow textures, revealing actual vo
 
 ## Embryonic vessel growth
 
-Local six-neighbor tissue values and unmet metabolic demand direct branching arterial/venous fronts through voxel space. A spatial flood-distance pass identifies regions that need a capillary connection. Those regions are linked back through *contiguous* fluid-voxel channels to both arterial and venous matter. Vessel-wall material encapsulates all lumen boundaries after growth. Different cell and organ matter densities control their oxygen demand.
+Arterial and venous tips explore **all 26 neighboring 3D voxels**, including diagonals, following unmet metabolic demand and their previous growth direction. Each diagonal tip deposits intermediate face-connected lumen voxels: even a corner-to-corner growth step produces a physically connected channel that the six-face flow solver can traverse. A spatial flood-distance pass identifies regions that need a capillary connection. Those regions are linked back through *contiguous* fluid-voxel channels to both arterial and venous matter. Vessel-wall material encapsulates all lumen boundaries after growth. Different cell and organ matter densities control their oxygen demand.
 
 Morphologies: kidney, liver, heart, lung, and an experimental organoid. They are stylized forms, not medical reconstructions.
 
@@ -69,7 +69,7 @@ Open [http://localhost:8000](http://localhost:8000). You need a modern browser w
 npm test
 \`\`\`
 
-They verify all five morphologies, physical 6-neighbor connectivity, conservation of inlet/outlet volume flux, no dye leakage into tissue, oxygen diffusion, and actual lumen-wall materials.
+They verify all five morphologies, diagonal growth and physical 6-neighbor connectivity, conservation of inlet/outlet volume flux, no dye leakage into tissue, oxygen diffusion, and actual lumen-wall materials.
 
 ## Research background
 
