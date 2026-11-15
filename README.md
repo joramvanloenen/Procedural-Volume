@@ -20,7 +20,7 @@ A single **64 × 64 × 64** material lattice contains:
 
 Additional 3D scalar/vector fields: **matter density**, **metabolic oxygen demand**, **tissue oxygen**, **nutrient concentration**, **blood oxygen**, **transported fluorescent dye**, **pressure**, **velocity X/Y/Z**, and **per-face fluid fluxes**.
 
-The GPU ray marcher samples class, matter and flow textures, revealing actual voxel lumens and vessel walls, not tube geometry. You can hide low-density material with the cutoff slider, adjust opacity, use a section plane, and view tissue oxygen or blood flow.
+The GPU ray marcher samples class, matter and flow textures, revealing actual voxel lumens and vessel walls, not tube geometry. A separate trilinear 3D vessel-occupancy transfer texture smooths the visible outline of diagonal channels without changing the physical voxel-fluid simulation. You can hide low-density material with the cutoff slider, adjust opacity, use a section plane, and view tissue oxygen or blood flow.
 
 ## Layered, purpose-driven organ morphogenesis
 
@@ -39,7 +39,7 @@ The morphology templates are **research-inspired approximations**, not anatomica
 ### Demand-directed routing
 
 1. **Choose arterial and venous territories separately.** A functional quota assigns the organ's tissue zones their own supply and drainage targets. A hepatic central vein can have high drainage importance even when its zone occupies little volume.
-2. **Route along a 3D tissue-resistance cost field.** A multi-source, weighted shortest-path search connects each target to the *lowest-cost point of the existing tree*. Tissue density, compartment resistance, path length and supply/drainage affinity determine where voxels become vascular lumens. Paths remain face-connected; macroscopic branches may run diagonally.
+2. **Route along a 3D tissue-resistance cost field.** A 26-direction weighted shortest-path search connects each target to the *lowest-cost point of the existing tree*. It uses Euclidean diagonal distances, compartment resistance, tissue density, and direction continuity. Each diagonal centerline segment gets face-connected intermediate lumen voxels so the pressure solver can carry fluid along it. Tests now count diagonals between **consecutive centerline voxels** rather than falsely counting diagonal endpoint offsets.
 3. **Mature high-flow trunks.** Each target's metabolic workload accumulates up its parent path; heavily loaded arterial and venous parents widen into larger lumen regions, while fine terminals stay smaller.
 4. **Bridge the exchange regions.** Metabolic demand, oxygen deficit and transport cost select capillary bed sites. Their paths join the arterial and venous matter volumes rather than becoming disconnected decorative branches.
 5. **Solve pressure and advect dissolved contents.** The shared 3D pressure field moves fluid dye and plasma through lumen voxels. Neighbor-dependent oxygen/nutrient diffusion updates regional viability.
@@ -95,7 +95,7 @@ Open [http://localhost:8000](http://localhost:8000). You need a modern browser w
 npm test
 \`\`\`
 
-Tests verify all five organ morphologies and their layers, organ-specific supply/drainage destinations, diagonal macroscopic routes, face-connected voxel circulation, inlet/outlet mass conservation, advected dye, oxygen exchange and encapsulating walls.
+Tests verify all five organ morphologies and their layers, organ-specific supply/drainage destinations, **true 26-direction centerline moves**, smooth venous volume occupancy, face-connected voxel circulation, inlet/outlet mass conservation, advected dye, oxygen exchange and encapsulating walls.
 
 ## Research background
 
@@ -105,4 +105,4 @@ Source references: [vascular development review](https://pmc.ncbi.nlm.nih.gov/ar
 
 ## Deployment
 
-The GitHub Actions workflow in \`.github/workflows/deploy.yml\` runs JavaScript syntax checks and voxel-fluid tests, then publishes the static app to GitHub Pages on each push to \`main\`.
+The GitHub Actions workflow in \`.github/workflows/deploy.yml\` runs JavaScript syntax checks and voxel-fluid tests. The repository's native **Pages build and deployment** workflow publishes the static site from \`main\`. Separating these pipelines avoids duplicate GitHub Pages artifact deployments.
