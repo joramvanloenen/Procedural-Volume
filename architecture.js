@@ -120,16 +120,38 @@ export function buildRegionalTargets(model,type,count){
  }
  let total=0;for(let group of zones.values())total+=group.weight;
  let selected=[],assigned=new Map();
+ // Functional destinations are not proportional only to volume: a hepatic
+ // central vein occupies little tissue but must receive the lobule's drainage.
+ // Zonal budgets therefore encode the known direction of organ blood flow.
+ const quotas={
+  kidney:{
+   3:{2:.62,3:.18,4:.20},4:{2:.52,3:.22,4:.26}
+  },
+  liver:{
+   3:{5:.25,6:.72,7:.03},4:{5:.30,6:.03,7:.67}
+  },
+  lung:{
+   3:{8:.02,9:.54,10:.44},4:{8:.20,9:.10,10:.70}
+  },
+  heart:{
+   3:{11:.32,12:.65,13:.03},4:{11:.46,12:.50,13:.04}
+  },
+  organic:{
+   3:{14:.72,15:.02,16:.26},4:{14:.62,15:.04,16:.34}
+  }
+ };
+ const budget=quotas[model.settings.organ]?.[type]||{};
  const groups=[...zones.entries()].sort((a,b)=>b[1].weight-a[1].weight);
  const minDistanceSquared=type===3?40:42;
  // Allocate quotas in proportion to total zonal metabolic work.
  for(let [layer,group] of groups){
-  const quota=Math.max(2,Math.round(count*group.weight/Math.max(1,total)));
+  const quota=Math.max(1,Math.round(count*(budget[layer]??group.weight/Math.max(1,total))));
   group.candidates.sort((a,b)=>b.importance-a.importance);
   let chosen=0;
   for(let candidate of group.candidates){
    if(chosen>=quota)break;
-   if(selected.some(p=>sq(p.x-candidate.x)+sq(p.y-candidate.y)+sq(p.z-candidate.z)<minDistanceSquared))continue;
+   const separation=(layer===ZONE.CENTRAL_VEIN||layer===ZONE.PORTAL)?22:minDistanceSquared;
+   if(selected.some(p=>sq(p.x-candidate.x)+sq(p.y-candidate.y)+sq(p.z-candidate.z)<separation))continue;
    selected.push(candidate);chosen++;
   }
   assigned.set(layer,chosen);
