@@ -329,25 +329,32 @@ export class VolumeModel{
   for(let round=0;round<rounds;round++){
    let candidates=[];
    for(let z=3;z<N-3;z+=3)for(let y=3;y<N-3;y+=3)for(let x=3;x<N-3;x+=3){
-    const i=this.index(x,y,z),matter=this.matter[i];
-    if(matter!==MAT.TISSUE&&matter!==MAT.DENSE)continue;
-    if(dA[i]>30||dV[i]>30)continue;
-    const layer=this.layers[i];
-    if(layer===ZONE.CAPSULE||layer===ZONE.PLEURA||layer===ZONE.ENDOCARDIUM||layer===ZONE.NECROTIC)continue;
-    // Exchange beds prioritize metabolically active tissue farther from
-    // existing capillaries, but the path penalty discourages long detours.
-    const need=this.demand[i]*(1-this.oxygen[i]*.94);
-    const transport=(dA[i]+dV[i])*.018;
-    const matrix=this.resistance[i]*.085;
-    let score=need*2.6+.75*this.demand[i]-transport-matrix;
-    // Kidney: cortex receives the large glomerular/peritubular bed; medulla
-    // has fewer, longer straight vasa-recta-like terminal channels.
-    if(this.settings.organ==='kidney'&&layer===ZONE.CORTEX)score+=.45;
-    // Liver: portal inlet -> sinusoid -> central vein.
-    if(this.settings.organ==='liver'&&layer===ZONE.HEPATOCYTES)score+=.35;
-    if(this.settings.organ==='lung'&&layer===ZONE.ALVEOLI)score+=.45;
-    if(this.settings.organ==='heart'&&layer===ZONE.MYOCARDIUM)score+=.48;
-    candidates.push({x,y,z,i,score});
+    const center=this.index(x,y,z),centerLayer=this.layers[center];
+    if(!centerLayer)continue;
+    // The voxel grid is only a sampling accelerator. Actual capillary beds
+    // are placed at local oxygen deficits, not grid-crossing positions.
+    let best=null,bestValue=-Infinity;
+    for(let dz=-1;dz<=1;dz++)for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
+     const xx=x+dx,yy=y+dy,zz=z+dz,i=this.index(xx,yy,zz);
+     const matter=this.matter[i];
+     if(matter!==MAT.TISSUE&&matter!==MAT.DENSE)continue;
+     if(dA[i]>30||dV[i]>30)continue;
+     const layer=this.layers[i];
+     if(layer!==centerLayer)continue;
+     if(layer===ZONE.CAPSULE||layer===ZONE.PLEURA||
+        layer===ZONE.ENDOCARDIUM||layer===ZONE.NECROTIC)continue;
+     const need=this.demand[i]*(1-this.oxygen[i]*.94);
+     const transport=(dA[i]+dV[i])*.018;
+     const matrix=this.resistance[i]*.085;
+     let score=need*2.6+.75*this.demand[i]-transport-matrix;
+     if(this.settings.organ==='kidney'&&layer===ZONE.CORTEX)score+=.45;
+     if(this.settings.organ==='liver'&&layer===ZONE.HEPATOCYTES)score+=.35;
+     if(this.settings.organ==='lung'&&layer===ZONE.ALVEOLI)score+=.45;
+     if(this.settings.organ==='heart'&&layer===ZONE.MYOCARDIUM)score+=.48;
+     const quality=score-.015*(dx*dx+dy*dy+dz*dz);
+     if(quality>bestValue){bestValue=quality;best={x:xx,y:yy,z:zz,i,score};}
+    }
+    if(best)candidates.push(best);
    }
    candidates.sort((a,b)=>b.score-a.score);
    const chosen=[],budget=round===0?26:17;
