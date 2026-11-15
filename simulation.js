@@ -1,475 +1,481 @@
-// Morphogenesis engine: voxel matter, demand-guided angiogenesis, capillary anastomosis,
-// connected arterial / venous circulation, pressure-driven flow and nutrient diffusion.
-// Research-inspired generative model, not a physiological or medical simulator.
-export const GRID = 64;
-const clamp = (v,a,b) => Math.max(a,Math.min(b,v));
-const mix = (a,b,t) => a+(b-a)*t;
-const smooth = t => t*t*(3-2*t);
-const sq = x => x*x;
-const add = (a,b) => ({x:a.x+b.x,y:a.y+b.y,z:a.z+b.z});
-const sub = (a,b) => ({x:a.x-b.x,y:a.y-b.y,z:a.z-b.z});
-const mul = (v,s) => ({x:v.x*s,y:v.y*s,z:v.z*s});
-const len = v => Math.hypot(v.x,v.y,v.z);
-const norm = v => {let l=len(v)||1;return mul(v,1/l)};
-const distance2 = (a,b) => sq(a.x-b.x)+sq(a.y-b.y)+sq(a.z-b.z);
-function randomGenerator(seed) {
-  return function(){let t=seed+=0x6D2B79F5;t=Math.imul(t^t>>>15,t|1);t^=t+Math.imul(t^t>>>7,t|61);return ((t^t>>>14)>>>0)/4294967296};
-}
-export class VolumeModel {
-  constructor(settings) {
-    this.settings={...settings};
-    this.seed=Number(settings.seed)||38127;
-    this.rng=randomGenerator(this.seed);
-    this.N=GRID;
-    this.size=GRID*GRID*GRID;
-    this.density=new Float32Array(this.size);
-    this.demand=new Float32Array(this.size);
-    this.oxygen=new Float32Array(this.size);
-    this.bytes=new Uint8Array(this.size*4);
-    this.nodes=[];this.edges=[];this.bridges=0;
-    this.trees={artery:[],vein:[]};
-    this.roots={};
-    this.iteration=0;this.maxIterations=90;this.finished=false;
-    this.coverage=0;this.perfused=0;this.livingVoxels=0;this.flowLoops=0;
-    this.createTissue();
-    this.createAttractors();
-    this.initializeCirculation();
-    this.evaluateOxygen(false);
+// Everything persistent is a voxel field. No procedural tube or vessel-edge meshes.
+// Voxel classes: 0 void, 1 parenchyma, 2 dense tissue, 3 arterial fluid,
+// 4 venous fluid, 5 capillary fluid, 6 encapsulating vessel wall.
+// Tissue sprouts are grown by 6-neighbor chemotaxis and capillary paths
+// are connected using 3D distance fields. Flow is a conservative face-flux
+// finite-volume pressure/transport model (not a full Navier-Stokes solver).
+export const GRID=64;
+const N=GRID, N2=N*N, SIZE=N*N*N;
+const clamp=(x,a,b)=>Math.min(b,Math.max(a,x));
+const mix=(a,b,t)=>a+(b-a)*t;
+const smooth=t=>t*t*(3-2*t);
+const sq=x=>x*x;
+const step6=[1,-1,N,-N,N2,-N2];
+export const MAT={VOID:0,TISSUE:1,DENSE:2,ARTERY:3,VEIN:4,CAPILLARY:5,WALL:6};
+function randomGenerator(seed){return()=>{let t=seed+=0x6d2b79f5;t=Math.imul(t^t>>>15,t|1);t^=t+Math.imul(t^t>>>7,t|61);return((t^t>>>14)>>>0)/4294967296};}
+export class VolumeModel{
+ constructor(options={}){
+  this.settings={organ:'kidney',seed:38127,vascularity:72,heterogeneity:58,reach:65,viscosity:40,...options};
+  this.seed=+this.settings.seed||38127;
+  this.random=randomGenerator(this.seed);
+  this.N=N;this.size=SIZE;
+  this.matter=new Uint8Array(SIZE);
+  this.density=new Float32Array(SIZE);
+  this.demand=new Float32Array(SIZE);
+  this.oxygen=new Float32Array(SIZE);
+  this.nutrient=new Float32Array(SIZE);
+  this.bloodOxygen=new Float32Array(SIZE);
+  this.dye=new Float32Array(SIZE);
+  this.pressure=new Float32Array(SIZE);
+  this.vx=new Float32Array(SIZE);
+  this.vy=new Float32Array(SIZE);
+  this.vz=new Float32Array(SIZE);
+  this.faceX=new Float32Array(SIZE);
+  this.faceY=new Float32Array(SIZE);
+  this.faceZ=new Float32Array(SIZE);
+  this.fieldBytes=new Uint8Array(SIZE*4);
+  this.materialBytes=new Uint8Array(SIZE);
+  this.flowBytes=new Uint8Array(SIZE*4);
+  this.occupied=0;this.lumenCount=0;this.capillaryCount=0;this.wallCount=0;
+  this.inlet=-1;this.outlet=-1;this.tips=[];this.iteration=0;this.maxIterations=85;
+  this.finished=false;this.coverage=0;this.perfused=0;this.flowingVoxels=0;this.flowRate=0;
+  this.fluidTime=0;this.fluidClock=0;this.flowSolved=false;
+  this.buildTissue();this.seedVessels();this.updateTexture();
+ }
+ index(x,y,z){return x+y*N+z*N2}
+ xyz(i){let z=Math.floor(i/N2),y=Math.floor((i-z*N2)/N);return [i-z*N2-y*N,y,z]}
+ inside(x,y,z){return x>0&&x<N-1&&y>0&&y<N-1&&z>0&&z<N-1}
+ isFluid(i){let t=this.matter[i];return t>=3&&t<=5}
+ rand(){return this.random()}
+ hash(x,y,z){let h=Math.imul(x,374761393)+Math.imul(y,668265263)+Math.imul(z,2147483647)+Math.imul(this.seed,1274126177);h=Math.imul(h^h>>>13,1274126177);return((h^h>>>16)>>>0)/4294967295}
+ noise(x,y,z){
+  const a=Math.floor(x),b=Math.floor(y),c=Math.floor(z),u=smooth(x-a),v=smooth(y-b),w=smooth(z-c);
+  let f=(xi,yi,zi)=>this.hash(xi,yi,zi)*2-1;
+  return mix(mix(mix(f(a,b,c),f(a+1,b,c),u),mix(f(a,b+1,c),f(a+1,b+1,c),u),v),
+      mix(mix(f(a,b,c+1),f(a+1,b,c+1),u),mix(f(a,b+1,c+1),f(a+1,b+1,c+1),u),v),w);
+ }
+ morphology(x,y,z){
+  const n=this.noise(x*3.1+13,y*3.1+7,z*3.1+3)*.07+this.noise(x*6.3+3,y*6.3+8,z*6.3+11)*.025;
+  let s=this.settings.organ,core=0;
+  if(s==='kidney'){
+   let xx=x+.17*(1-y*y);
+   core=1-Math.sqrt(sq(xx/.77)+sq(y/.92)+sq(z/.65));
+   core-=.33*Math.exp(-(sq((x-.58)/.29)+sq(y/.34)+sq(z/.45)));
+  }else if(s==='liver'){
+   core=1-Math.sqrt(sq(x/.94)+sq((y+.14*x)/.67)+sq(z/(.69-.16*x)));
+   core+=.08*Math.exp(-(sq((x+.44)/.37)+sq((y-.35)/.24)));
+  }else if(s==='heart'){
+   let taper=clamp(.75+.25*(y+.5),.46,1.13);
+   core=1-Math.sqrt(sq(x/(.72*taper))+sq((y+.08)/.89)+sq(z/.68));
+   core+=.2*Math.max(Math.exp(-(sq((x-.34)/.35)+sq((y-.45)/.4)+sq(z/.5))),Math.exp(-(sq((x+.34)/.35)+sq((y-.45)/.4)+sq(z/.5))));
+  }else if(s==='lung'){
+   let left=1-Math.sqrt(sq((x+.36)/.55)+sq((y+.01)/.95)+sq(z/.55));
+   let right=1-Math.sqrt(sq((x-.36)/.55)+sq((y+.01)/.92)+sq(z/.55));
+   let bridge=1-Math.sqrt(sq(x/.37)+sq((y+.33)/.32)+sq(z/.28));
+   core=Math.max(left,right,bridge);
+   core-=.09*Math.exp(-sq(x/.17))*clamp(y+.2,0,1);
+  }else{
+   core=1-Math.sqrt(sq(x/.81)+sq(y/.87)+sq(z/.75));
+   core+=.11*Math.sin(x*7+y*3)*Math.cos(z*5);
   }
-  rand(){return this.rng()}
-  hash(x,y,z){
-    let h=Math.imul(x,374761393)+Math.imul(y,668265263)+Math.imul(z,2147483647)+Math.imul(this.seed,1274126177);
-    h=Math.imul(h^(h>>>13),1274126177);
-    return ((h^(h>>>16))>>>0)/4294967295;
+  return core+n;
+ }
+ buildTissue(){
+  let het=this.settings.heterogeneity/100;
+  for(let z=1;z<N-1;z++)for(let y=1;y<N-1;y++)for(let x=1;x<N-1;x++){
+   let u=x/(N-1)*2-1,v=y/(N-1)*2-1,w=z/(N-1)*2-1;
+   let edge=this.morphology(u,v,w);if(edge<=0)continue;
+   let i=this.index(x,y,z);
+   let fbm=.55*this.noise(u*7+13,v*7+4,w*7+11)+.28*this.noise(u*15,v*15,w*15)+.17*this.noise(u*28,v*28,w*28);
+   let cortex=.2*Math.exp(-sq((edge-.13)/.11));
+   let d=.43+.23*smooth(clamp(edge*3.4,0,1))+cortex+fbm*(.13+.24*het);
+   if(this.settings.organ==='kidney')d-=.14*Math.max(0,Math.sin(13*v+7*Math.atan2(w,u)))*(1-clamp(edge*1.8,0,1));
+   if(this.settings.organ==='lung')d-=.12*Math.max(0,Math.sin(u*24+v*19+w*17));
+   if(this.settings.organ==='heart')d+=.09*Math.sin(Math.atan2(v,u)*8+16*w);
+   d*=smooth(clamp(edge*20,0,1))*.85+.15;
+   d=clamp(d,.16,.98);
+   this.density[i]=d;
+   this.demand[i]=clamp(.40+.48*d+het*(.15*fbm+.08*this.noise(u*10+11,v*10,w*10)),.3,1);
+   this.matter[i]=d>.69?MAT.DENSE:MAT.TISSUE;
+   this.occupied++;
   }
-  noise(x,y,z) {
-    const xi=Math.floor(x),yi=Math.floor(y),zi=Math.floor(z);
-    const fx=smooth(x-xi),fy=smooth(y-yi),fz=smooth(z-zi);
-    let a=mix(this.hash(xi,yi,zi),this.hash(xi+1,yi,zi),fx);
-    let b=mix(this.hash(xi,yi+1,zi),this.hash(xi+1,yi+1,zi),fx);
-    let c=mix(this.hash(xi,yi,zi+1),this.hash(xi+1,yi,zi+1),fx);
-    let d=mix(this.hash(xi,yi+1,zi+1),this.hash(xi+1,yi+1,zi+1),fx);
-    return mix(mix(a,b,fy),mix(c,d,fy),fz)*2-1;
+ }
+ nearestTissue(x,y,z){
+  x=clamp(Math.round(x),2,N-3);y=clamp(Math.round(y),2,N-3);z=clamp(Math.round(z),2,N-3);
+  if(this.matter[this.index(x,y,z)])return [x,y,z];
+  let cx=Math.round(N/2),cy=Math.round(N/2),cz=Math.round(N/2);
+  for(let k=1;k<26;k++){
+   let a=k/26;let xx=Math.round(mix(x,cx,a)),yy=Math.round(mix(y,cy,a)),zz=Math.round(mix(z,cz,a));
+   if(this.matter[this.index(xx,yy,zz)])return [xx,yy,zz];
   }
-  shape(x,y,z) {
-    const organic=this.noise(x*3.1+13,y*3.1+7,z*3.1+3)*.070+
-      this.noise(x*6.3+3,y*6.3+8,z*6.3+11)*.025;
-    const s=this.settings.organ;
-    let core=0;
-    if(s==='kidney'){
-      let xx=x+.17*(1-y*y);
-      core=1-Math.sqrt(sq(xx/.77)+sq(y/.92)+sq(z/.65));
-      let notch=Math.exp(-(sq((x-.58)/.29)+sq((y+.01)/.34)+sq(z/.45)));
-      core-=notch*.33;
-    }else if(s==='liver'){
-      let off=.14*x;
-      core=1-Math.sqrt(sq(x/.94)+sq((y+off)/.67)+sq(z/(.69-.16*x)));
-      core+=.08*Math.exp(-(sq((x+.44)/.37)+sq((y-.35)/.24)));
-    }else if(s==='heart'){
-      let taper=clamp(.75+.25*(y+.5),.46,1.13);
-      core=1-Math.sqrt(sq(x/(.72*taper))+sq((y+.08)/.89)+sq(z/.68));
-      let lobes=Math.max(Math.exp(-(sq((x-.34)/.35)+sq((y-.45)/.4)+sq(z/.5))),
-        Math.exp(-(sq((x+.34)/.35)+sq((y-.45)/.4)+sq(z/.5))));
-      core+=.20*lobes;
-      core-=.12*Math.exp(-(sq(x/.20)+sq((y-.82)/.25)+sq(z/.38)));
-    }else if(s==='lung'){
-      let left=1-Math.sqrt(sq((x+.36)/.55)+sq((y+.01)/.95)+sq(z/.55));
-      let right=1-Math.sqrt(sq((x-.36)/.55)+sq((y+.01)/.92)+sq(z/.55));
-      let bridge=1-Math.sqrt(sq(x/.37)+sq((y+.33)/.32)+sq(z/.28));
-      core=Math.max(left,right,bridge);
-      core-=.09*Math.exp(-sq(x/.17))*clamp(y+.2,0,1);
+  return [cx,cy,cz];
+ }
+ setFluid(i,type){
+  let before=this.matter[i];if(!before)return false;
+  if(this.isFluid(i))return before===type;
+  this.matter[i]=type;this.density[i]=type===MAT.CAPILLARY?.67:.79;
+  this.lumenCount++;if(type===MAT.CAPILLARY)this.capillaryCount++;
+  this.pressure[i]=type===MAT.ARTERY?.82:type===MAT.VEIN?.18:.50;
+  this.bloodOxygen[i]=type===MAT.ARTERY?1:type===MAT.VEIN?.50:.80;
+  this.nutrient[i]=.85;
+  this.oxygen[i]=.9;
+  return true;
+ }
+ seedVessels(){
+  let mid=N/2;
+  let [ax,ay,az]=this.nearestTissue(mid-5,mid-16,mid-2);
+  let [vx,vy,vz]=this.nearestTissue(mid+5,mid-16,mid+2);
+  this.inlet=this.index(ax,ay,az);this.outlet=this.index(vx,vy,vz);
+  this.setFluid(this.inlet,MAT.ARTERY);this.setFluid(this.outlet,MAT.VEIN);
+  for(let type of [MAT.ARTERY,MAT.VEIN]){
+   let xyz=type===MAT.ARTERY?[ax,ay,az]:[vx,vy,vz];
+   for(let i=0;i<13;i++){
+    let [x,y,z]=xyz;const at=this.index(x,y,z);
+    if(this.matter[at]===MAT.TISSUE||this.matter[at]===MAT.DENSE)this.setFluid(at,type);
+    if(i%2===0){
+     for(let a=0;a<3;a++){
+      const angle=(a/3)*Math.PI*2+this.rand()*1.7;
+      this.tips.push({x,y,z,type,dx:Math.cos(angle),dy:0.12+this.rand()*.7,dz:Math.sin(angle),age:0});
+     }
+    }
+    xyz=[x,Math.min(N-2,y+1),z];
+   }
+  }
+ }
+ step(){
+  if(this.finished)return false;
+  let proposed=[],limit=250+Math.round(this.settings.vascularity*4);
+  const choose6=[[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]];
+  let tipList=this.tips;
+  // Deterministic shuffle prevents a directional processing bias.
+  for(let i=tipList.length-1;i>0;i--){let j=Math.floor(this.rand()*(i+1));[tipList[i],tipList[j]]=[tipList[j],tipList[i]]}
+  const next=[],active=Math.min(tipList.length,limit);
+  for(let n=0;n<active;n++){
+   let tip=tipList[n],best=-1,bestScore=-Infinity,bestDir=null;
+   for(let d of choose6){
+    let x=tip.x+d[0],y=tip.y+d[1],z=tip.z+d[2];
+    if(!this.inside(x,y,z))continue;
+    let i=this.index(x,y,z),type=this.matter[i];
+    if(type!==MAT.TISSUE&&type!==MAT.DENSE)continue;
+    let x2=x+d[0]*2,y2=y+d[1]*2,z2=z+d[2]*2;
+    let ahead=this.inside(x2,y2,z2)?this.index(x2,y2,z2):-1;
+    let dir=(tip.dx*d[0]+tip.dy*d[1]+tip.dz*d[2]);
+    // Sprouts are biased by unmet metabolic demand, direction persistence
+    // and the density of same-type neighboring voxels.
+    let crowded=0;
+    for(let o of step6){
+     let neighbor=i+o;
+     if(this.matter[neighbor]===tip.type)crowded++;
+    }
+    let score=.85*(1-this.oxygen[i])+.45*this.demand[i]+.65*dir-.14*crowded+
+      (ahead>=0&&this.matter[ahead]===tip.type?-.55:0)+this.rand()*.57;
+    if(score>bestScore){bestScore=score;best=i;bestDir=d}
+   }
+   if(best<0)continue;
+   this.setFluid(best,tip.type);
+   const [x,y,z]=this.xyz(best);
+   let dx=.71*tip.dx+.29*bestDir[0],dy=.71*tip.dy+.29*bestDir[1],dz=.71*tip.dz+.29*bestDir[2],norm=Math.hypot(dx,dy,dz)||1;
+   const newTip={x,y,z,type:tip.type,dx:dx/norm,dy:dy/norm,dz:dz/norm,age:tip.age+1};
+   next.push(newTip);
+   const chance=(.017+this.settings.vascularity*.00067);
+   if(tip.age>2&&this.rand()<chance&&next.length<limit){
+    let r=this.rand()*Math.PI*2;
+    proposed.push({x,y,z,type:tip.type,dx:Math.cos(r),dy:this.rand()*1.4-.4,dz:Math.sin(r),age:0});
+   }
+  }
+  this.tips=next.concat(proposed).slice(0,limit);
+  this.iteration++;
+  if(this.iteration>=this.maxIterations||(!this.tips.length&&this.iteration>10)){
+   this.finish();
+  }
+  return !this.finished;
+ }
+ // Multi-source 6-neighborhood flood distances. Nothing travels through air.
+ distanceFrom(type){
+  const dist=new Int16Array(SIZE);dist.fill(32767);
+  const queue=new Int32Array(SIZE);let tail=0,head=0;
+  for(let i=0;i<SIZE;i++){
+   if(this.matter[i]===type){dist[i]=0;queue[tail++]=i}
+  }
+  while(head<tail){
+   const i=queue[head++],d=dist[i]+1;
+   let x=i%N,y=Math.floor(i/N)%N,z=Math.floor(i/N2);
+   if(x===0||x===N-1||y===0||y===N-1||z===0||z===N-1)continue;
+   for(let k=0;k<6;k++){
+    let j=i+step6[k];if(this.matter[j]===MAT.VOID||dist[j]<=d)continue;
+    if(type===MAT.ARTERY&&this.matter[j]===MAT.VEIN)continue;
+    if(type===MAT.VEIN&&this.matter[j]===MAT.ARTERY)continue;
+    dist[j]=d;queue[tail++]=j;
+   }
+  }
+  return dist;
+ }
+ pathFrom(i,dist,targetType){
+  if(dist[i]===32767)return null;
+  let path=[],current=i,guard=0;
+  while(dist[current]>0&&guard++<SIZE){
+   let best=-1,d=dist[current];
+   let [x,y,z]=this.xyz(current);
+   if(!this.inside(x,y,z))return null;
+   for(let o of step6){let j=current+o;if(dist[j]<d){d=dist[j];best=j}}
+   if(best<0)return null;
+   if(this.matter[current]===MAT.TISSUE||this.matter[current]===MAT.DENSE||this.matter[current]===MAT.WALL)path.push(current);
+   current=best;
+  }
+  if(this.matter[current]!==targetType)return null;
+  return path;
+ }
+ connectThrough(i,dA,dV){
+  let a=this.pathFrom(i,dA,MAT.ARTERY),b=this.pathFrom(i,dV,MAT.VEIN);
+  if(!a||!b||a.length+b.length>75)return false;
+  for(let index of a.concat(b)){
+   if(!this.isFluid(index))this.setFluid(index,MAT.CAPILLARY);
+  }
+  return true;
+ }
+ connectCapillaryBeds(rounds=4){
+  // Connect unmet-demand tissue directly to both arterial and venous fields.
+  // All path segments are actual connected fluid voxels; no abstract edge exists.
+  let dA=this.distanceFrom(MAT.ARTERY),dV=this.distanceFrom(MAT.VEIN);
+  let selected=[],created=0;
+  for(let round=0;round<rounds;round++){
+   let candidates=[];
+   for(let z=3;z<N-3;z+=3)for(let y=3;y<N-3;y+=3)for(let x=3;x<N-3;x+=3){
+    let i=this.index(x,y,z),t=this.matter[i];
+    if(t!==MAT.TISSUE&&t!==MAT.DENSE)continue;
+    if(dA[i]>28||dV[i]>28)continue;
+    let unmet=this.demand[i]*(1-this.oxygen[i]),dx=dA[i],dy=dV[i];
+    let score=unmet*2+.085*(dx+dy)+this.rand()*.15;
+    if(this.oxygen[i]>this.demand[i]*.65)score-=1.8;
+    if(dx<2||dy<2)score-=.3;
+    candidates.push({x,y,z,i,score});
+   }
+   candidates.sort((a,b)=>b.score-a.score);
+   let chosen=[],budget=round===0?45:32;
+   for(let c of candidates){
+    if(chosen.length>=budget)break;
+    if(selected.some(p=>sq(p.x-c.x)+sq(p.y-c.y)+sq(p.z-c.z)<25))continue;
+    if(chosen.some(p=>sq(p.x-c.x)+sq(p.y-c.y)+sq(p.z-c.z)<36))continue;
+    if(this.connectThrough(c.i,dA,dV)){
+     chosen.push(c);created++;
+    }
+   }
+   if(!chosen.length)break;
+   selected.push(...chosen);
+   dA=this.distanceFrom(MAT.ARTERY);dV=this.distanceFrom(MAT.VEIN);
+   this.recomputeCoverage(true);
+   if(this.coverage>=97)break;
+  }
+  this.bridges=created;
+ }
+ rebuildWall(){
+  let walls=[];
+  for(let i=N2+N+1;i<SIZE-N2-N-1;i++){
+   if(!this.isFluid(i))continue;
+   for(let o of step6){
+    let j=i+o;
+    if(this.matter[j]===MAT.TISSUE||this.matter[j]===MAT.DENSE)walls.push(j);
+   }
+  }
+  for(let j of walls){
+   if(this.matter[j]===MAT.TISSUE||this.matter[j]===MAT.DENSE){
+    this.matter[j]=MAT.WALL;this.density[j]=clamp(this.density[j]+.18,.2,1);
+   }
+  }
+ }
+ recomputeCoverage(reseed=false){
+  // Neighborhood distance model used as initial condition & growth chemotaxis.
+  // The actual fields then evolve by finite-volume advection and diffusion.
+  let dist=new Int16Array(SIZE);dist.fill(32767);
+  const q=new Int32Array(SIZE);let head=0,tail=0;
+  for(let i=0;i<SIZE;i++){
+   let t=this.matter[i];
+   if(t===MAT.CAPILLARY||t===MAT.ARTERY){
+    dist[i]=t===MAT.CAPILLARY?0:2;q[tail++]=i;
+   }
+  }
+  // Start queue with all sources; core arteries are treated as weaker tissue
+  // exchange surfaces than capillaries. An actual blood plasma field follows.
+  while(head<tail){
+   let i=q[head++],d=dist[i]+1;
+   let x=i%N,y=Math.floor(i/N)%N,z=Math.floor(i/N2);
+   if(x===0||x===N-1||y===0||y===N-1||z===0||z===N-1)continue;
+   for(let o of step6){
+    let j=i+o;
+    if(!this.matter[j]||dist[j]<=d)continue;
+    dist[j]=d;q[tail++]=j;
+   }
+  }
+  let reach=2.2+this.settings.reach*.12,covered=0,perf=0,voxels=0;
+  for(let i=0;i<SIZE;i++){
+   let t=this.matter[i];if(!t||this.isFluid(i))continue;
+   voxels++;
+   let initial=clamp(1.04-dist[i]/reach,0,1);
+   if(reseed)this.oxygen[i]=Math.max(this.oxygen[i],initial);
+   else this.oxygen[i]=initial;
+   this.nutrient[i]=Math.max(this.nutrient[i],initial*.94);
+   if(this.oxygen[i]>this.demand[i]*.48)covered++;
+   if(this.oxygen[i]>.22)perf++;
+  }
+  this.coverage=voxels?100*covered/voxels:0;
+  this.perfused=voxels?100*perf/voxels:0;
+ }
+ solvePressure(){
+  // Solve the discrete incompressible pressure potential on the lumen mask.
+  // Faces shared with tissue and vessel walls are no-flux boundaries.
+  // Fixed pressure at inlet & outlet provides circulation drive.
+  const p=this.pressure,m=this.matter,rootA=this.inlet,rootV=this.outlet;
+  const permeability=i=>m[i]===MAT.CAPILLARY?.30:1;
+  const indices=[];
+  for(let i=0;i<SIZE;i++)if(this.isFluid(i)&&i!==rootA&&i!==rootV)indices.push(i);
+  p[rootA]=1;p[rootV]=0;
+  for(let it=0;it<460;it++){
+   let worst=0;
+   // Alternating sweep reduces lattice anisotropy and pressure residual.
+   const backwards=Boolean(it&1);
+   for(let t=0;t<indices.length;t++){
+    const i=indices[backwards?indices.length-1-t:t];
+    let total=0,weight=0;
+    const k0=permeability(i);
+    for(let o of step6){
+     let j=i+o;if(!this.isFluid(j))continue;
+     let g=.5*(k0+permeability(j));
+     total+=g*p[j];weight+=g;
+    }
+    if(weight===0)continue;
+    let target=total/weight;
+    let next=clamp(p[i]+(target-p[i])*1.38,0,1);
+    worst=Math.max(worst,Math.abs(p[i]-next));p[i]=next;
+   }
+   if(it>160&&worst<.00004)break;
+  }
+  this.flowRate=0;this.flowingVoxels=0;
+  const fx=this.faceX,fy=this.faceY,fz=this.faceZ;
+  fx.fill(0);fy.fill(0);fz.fill(0);
+  for(let i=0;i<SIZE;i++){
+   if(!this.isFluid(i))continue;
+   const x=i%N,y=Math.floor(i/N)%N,z=Math.floor(i/N2);
+   for(let k=0;k<3;k++){
+    if((k===0&&x>=N-1)||(k===1&&y>=N-1)||(k===2&&z>=N-1))continue;
+    const j=i+[1,N,N2][k];
+    if(!this.isFluid(j))continue;
+    const conductance=(permeability(i)+permeability(j))*.5;
+    const flow=conductance*(p[i]-p[j]);
+    (k===0?fx:k===1?fy:fz)[i]=flow;
+    this.flowRate=Math.max(this.flowRate,Math.abs(flow));
+   }
+  }
+  const speed=this.flowRate? .56/this.flowRate:0;
+  for(let i=0;i<SIZE;i++){
+   if(!this.isFluid(i))continue;
+   const x=i%N,y=Math.floor(i/N)%N,z=Math.floor(i/N2);
+   this.vx[i]=(fx[i]+(x>0?fx[i-1]:0))*.5*speed;
+   this.vy[i]=(fy[i]+(y>0?fy[i-N]:0))*.5*speed;
+   this.vz[i]=(fz[i]+(z>0?fz[i-N2]:0))*.5*speed;
+   if(Math.hypot(this.vx[i],this.vy[i],this.vz[i])>.002)this.flowingVoxels++;
+  }
+  this.flowSolved=true;
+ }
+ finish(){
+  if(this.finished)return;
+  this.recomputeCoverage();
+  this.connectCapillaryBeds(5);
+  this.rebuildWall();
+  this.solvePressure();
+  this.recomputeCoverage(true);
+  this.finished=true;
+  this.updateTexture();
+ }
+ // Flux-limited, conservative upwind transport across SHARED 3D voxel faces.
+ // No dye or plasma can cross into a nonfluid tissue voxel. Oxygen & nutrient
+ // exchange then cross fluid/tissue interfaces by a separate diffusion flux.
+ advanceFluid(dt=1/30){
+  if(!this.finished)return;
+  this.fluidClock+=Math.max(0,dt);
+  const ticks=Math.min(4,Math.max(1,Math.round(dt*30)));
+  for(let sub=0;sub<ticks;sub++)this.transportSubstep();
+  this.fluidTime+=dt;
+  this.updateTexture();
+ }
+ transportSubstep(){
+  const m=this.matter,dye=this.dye,plasma=this.bloodOxygen,oxygen=this.oxygen,nutrients=this.nutrient;
+  const pulse=1+.22*Math.sin(this.fluidTime*7.0);
+  const dyeValue=.5+.5*Math.sin(this.fluidTime*3.2);
+  dye[this.inlet]=dyeValue;plasma[this.inlet]=1;
+  const dd=new Float32Array(SIZE),do2=new Float32Array(SIZE);
+  const speed=this.flowRate?(.23/this.flowRate)*pulse:0;
+  const viscosity=clamp(this.settings.viscosity/100,0,1);
+  const fluidMobility=1-.48*viscosity;
+  for(let i=0;i<SIZE;i++){
+   if(!this.isFluid(i))continue;
+   for(let axis=0;axis<3;axis++){
+    const offset=[1,N,N2][axis];
+    const x=i%N,y=Math.floor(i/N)%N,z=Math.floor(i/N2);
+    if((axis===0&&x>=N-1)||(axis===1&&y>=N-1)||(axis===2&&z>=N-1))continue;
+    const j=i+offset;
+    if(!this.isFluid(j))continue;
+    let q=[this.faceX,this.faceY,this.faceZ][axis][i]*speed*fluidMobility;
+    if(q===0)continue;
+    let donor=q>0?i:j,receiver=q>0?j:i,volume=clamp(Math.abs(q),0,.24);
+    let deltaD=volume*dye[donor],deltaO=volume*plasma[donor];
+    dd[donor]-=deltaD;dd[receiver]+=deltaD;
+    do2[donor]-=deltaO;do2[receiver]+=deltaO;
+   }
+  }
+  for(let i=0;i<SIZE;i++){
+   if(!this.isFluid(i))continue;
+   dye[i]=clamp((dye[i]+dd[i])*.999,0,1);
+   plasma[i]=clamp(plasma[i]+do2[i],0,1);
+  }
+  // Face exchange and tissue diffusion in the same 3D lattice.
+  // Compute changes from the old field, then apply simultaneously.
+  const oNext=new Float32Array(SIZE),nNext=new Float32Array(SIZE);
+  for(let i=0;i<SIZE;i++){
+   if(!m[i]||this.isFluid(i))continue;
+   let totalO=0,totalN=0;
+   for(let k=0;k<6;k++){
+    let j=i+step6[k],t=m[j];if(!t)continue;
+    if(this.isFluid(j)){
+     // Vessel wall is metabolically active but permeable to oxygen.
+     const exchange=t===MAT.CAPILLARY?.105:t===MAT.ARTERY?.025:.008;
+     totalO+=exchange*(plasma[j]-oxygen[i]);
+     totalN+=exchange*.85*(.90-nutrients[i]);
+     // Blood loses oxygen to nearby tissue. Flux is bounded per fluid voxel.
+     if(t===MAT.CAPILLARY)do2[j]-=Math.max(0,plasma[j]-oxygen[i])*.004;
     }else{
-      core=1-Math.sqrt(sq(x/.81)+sq(y/.87)+sq(z/.75));
-      core+=.11*Math.sin(x*7+y*3)*Math.cos(z*5);
+     totalO+=.055*(oxygen[j]-oxygen[i]);
+     totalN+=.048*(nutrients[j]-nutrients[i]);
     }
-    return core+organic;
+   }
+   oNext[i]=clamp(oxygen[i]+totalO-this.demand[i]*.0016,0,1);
+   nNext[i]=clamp(nutrients[i]+totalN-this.demand[i]*.0011,0,1);
   }
-  index(ix,iy,iz){return (iz*this.N+iy)*this.N+ix}
-  coords(p){
-    return [clamp(Math.round((p.x*.5+.5)*(this.N-1)),0,this.N-1),
-      clamp(Math.round((p.y*.5+.5)*(this.N-1)),0,this.N-1),
-      clamp(Math.round((p.z*.5+.5)*(this.N-1)),0,this.N-1)];
+  let covered=0,perfused=0,count=0;
+  for(let i=0;i<SIZE;i++){
+   if(m[i]&&!this.isFluid(i)){
+    oxygen[i]=oNext[i];nutrients[i]=nNext[i];count++;
+    if(oxygen[i]>=this.demand[i]*.48)covered++;
+    if(oxygen[i]>.22)perfused++;
+   }else if(this.isFluid(i)){
+    plasma[i]=clamp(plasma[i]+do2[i]*.35,0,1);
+   }
   }
-  voxel(p){const [x,y,z]=this.coords(p);return this.index(x,y,z)}
-  inTissue(p){return this.density[this.voxel(p)]>.19}
-  findInside(target){
-    if(this.inTissue(target))return target;
-    for(let i=1;i<30;i++){
-      let a=i/30;
-      let p=mul(target,1-a);
-      if(this.inTissue(p))return p;
-    }
-    return {x:0,y:0,z:0};
+  this.coverage=count?covered/count*100:0;
+  this.perfused=count?perfused/count*100:0;
+ }
+ updateTexture(){
+  const f=this.fieldBytes,m=this.materialBytes,v=this.flowBytes;
+  for(let i=0;i<SIZE;i++){
+   const t=this.matter[i],j=i*4;
+   m[i]=t;
+   f[j]=Math.round(clamp(this.density[i],0,1)*255);
+   f[j+1]=Math.round(clamp(this.isFluid(i)?this.bloodOxygen[i]:this.oxygen[i],0,1)*255);
+   f[j+2]=Math.round(clamp(this.nutrient[i],0,1)*255);
+   f[j+3]=Math.round(clamp(this.dye[i],0,1)*255);
+   v[j]=Math.round(clamp(this.vx[i]*.65+.5,0,1)*255);
+   v[j+1]=Math.round(clamp(this.vy[i]*.65+.5,0,1)*255);
+   v[j+2]=Math.round(clamp(this.vz[i]*.65+.5,0,1)*255);
+   v[j+3]=Math.round(clamp(this.pressure[i],0,1)*255);
   }
-  createTissue(){
-    let N=this.N,het=this.settings.heterogeneity/100;
-    let count=0;
-    for(let z=0;z<N;z++)for(let y=0;y<N;y++)for(let x=0;x<N;x++){
-      let px=x/(N-1)*2-1,py=y/(N-1)*2-1,pz=z/(N-1)*2-1;
-      let margin=this.shape(px,py,pz),i=this.index(x,y,z);
-      if(margin<0)continue;
-      const fbm=.55*this.noise(px*7+13,py*7+4,pz*7+11)+
-        .28*this.noise(px*15,py*15,pz*15)+.17*this.noise(px*28,py*28,pz*28);
-      let cortex=.20*Math.exp(-sq((margin-.13)/.11));
-      let fibres=.055*Math.sin(19*px+10*this.noise(py*5,pz*5,px*5));
-      let base=.43+.23*smooth(clamp(margin*3.4,0,1))+cortex+fbm*(.13+.24*het)+fibres;
-      if(this.settings.organ==='kidney'){
-        let medullary=Math.sin(13*py+Math.atan2(pz,px)*7);
-        base-=.16*Math.max(0,medullary)*(1-clamp(margin*1.8,0,1));
-      }else if(this.settings.organ==='lung'){
-        base-=.12*Math.max(0,Math.sin(px*24+py*19+pz*17));
-      }else if(this.settings.organ==='heart'){
-        base+=.11*Math.sin(Math.atan2(py,px)*8+16*pz);
-      }else if(this.settings.organ==='liver'){
-        base+=.06*Math.cos(px*15+py*13)*Math.sin(pz*11);
-      }
-      base*=smooth(clamp(margin*20,0,1))*.85+.15;
-      this.density[i]=clamp(base,.16,.97);
-      this.demand[i]=clamp(.43+this.density[i]*.45+het*(.16*fbm+.10*this.noise(px*10+11,py*10,pz*10)),.3,1);
-      count++;
-    }
-    this.livingVoxels=count;
-  }
-  createAttractors(){
-    this.attractors=[];
-    const count=Math.round(300+this.settings.vascularity*5.2);
-    let attempts=0;
-    while(this.attractors.length<count && attempts<count*100){
-      attempts++;
-      const p={x:this.rand()*1.85-.925,y:this.rand()*1.9-.95,z:this.rand()*1.5-.75};
-      const i=this.voxel(p);
-      if(this.density[i]<.27||this.rand()>this.demand[i])continue;
-      this.attractors.push({p,demand:this.demand[i],artery:false,vein:false});
-    }
-  }
-  addNode(p,type,parent=-1){
-    let id=this.nodes.length;
-    let node={id,p,type,parent,children:[],r:.011,pressure:type==='artery'?.8:type==='vein'?.2:.5,out:[]};
-    this.nodes.push(node);
-    if(parent>=0){
-      this.nodes[parent].children.push(id);
-      let l=Math.sqrt(distance2(p,this.nodes[parent].p));
-      this.edges.push({a:parent,b:id,type,len:Math.max(.0001,l),r:.011,flow:0});
-    }
-    if(type!=='capillary')this.trees[type].push(id);
-    return id;
-  }
-  initializeCirculation(){
-    for(let type of ['artery','vein']){
-      let dir=type==='artery'?-1:1;
-      let root=this.findInside({x:dir*.16,y:-.52,z:dir*.12});
-      let last=this.addNode(root,type);
-      this.roots[type]=last;
-      for(let i=1;i<=12;i++){
-        const p=this.findInside({x:dir*(.16-.03*i/12),y:-.52+i*.051,z:dir*.12});
-        if(distance2(p,this.nodes[last].p)<.00025)continue;
-        last=this.addNode(p,type,last);
-      }
-    }
-  }
-  growTree(type){
-    const ids=this.trees[type],field=type;
-    const limit=Math.round(470+this.settings.vascularity*9.0);
-    if(ids.length>=limit)return 0;
-    const accum=new Map();
-    for(let a=0;a<this.attractors.length;a++){
-      const target=this.attractors[a];
-      if(target[field])continue;
-      let best=-1,bestD=Infinity;
-      for(let k=0;k<ids.length;k++){
-        let id=ids[k],p=this.nodes[id].p;
-        let d=sq(target.p.x-p.x)+sq(target.p.y-p.y)+sq(target.p.z-p.z);
-        if(d<bestD){bestD=d;best=id}
-      }
-      if(bestD<.0049){target[field]=true;continue}
-      if(bestD>.58*.58||best<0)continue;
-      const p=this.nodes[best].p;
-      const direction=norm(sub(target.p,p));
-      let weight=target.demand/(.30+Math.sqrt(bestD));
-      let acc=accum.get(best);
-      if(!acc){acc={x:0,y:0,z:0,count:0};accum.set(best,acc)}
-      acc.x+=direction.x*weight;acc.y+=direction.y*weight;acc.z+=direction.z*weight;acc.count++;
-    }
-    let generated=0;
-    for(let [id,acc] of accum){
-      if(ids.length>=limit||generated>=75)break;
-      let parent=this.nodes[id];
-      let ancestral=parent.parent>=0?norm(sub(parent.p,this.nodes[parent.parent].p)):{x:0,y:1,z:0};
-      let target=norm(add(mul(norm(acc),.88),mul(ancestral,.20)));
-      target=norm(add(target,{x:(this.rand()-.5)*.09,y:(this.rand()-.5)*.09,z:(this.rand()-.5)*.09}));
-      const step=.037;
-      let p=add(parent.p,mul(target,step));
-      if(!this.inTissue(p)){
-        let center=norm(mul(parent.p,-1));
-        p=add(parent.p,mul(norm(add(mul(target,.25),mul(center,.75))),step));
-        if(!this.inTissue(p))continue;
-      }
-      if(this.nearbyNode(p,ids,id,step*.56))continue;
-      this.addNode(p,type,id);generated++;
-      if(acc.count>=7&&this.rand()<.10&&ids.length<limit){
-        let tangent=norm({x:target.y-target.z,y:target.z-target.x,z:target.x-target.y});
-        let alternate=norm(add(mul(target,.44),mul(tangent,this.rand()<.5?1:-1)));
-        let q=add(parent.p,mul(alternate,step));
-        if(this.inTissue(q)&&!this.nearbyNode(q,ids,id,step*.7)){
-          this.addNode(q,type,id);generated++;
-        }
-      }
-    }
-    return generated;
-  }
-  nearbyNode(p,ids,except,range){
-    let rr=range*range;
-    for(let k=0;k<ids.length;k++){
-      let id=ids[k];
-      if(id!==except&&distance2(p,this.nodes[id].p)<rr)return true;
-    }
-    return false;
-  }
-  step(){
-    if(this.finished)return false;
-    this.growTree('artery');this.growTree('vein');
-    this.iteration++;
-    if(this.iteration>=this.maxIterations)this.finish();
-    return !this.finished;
-  }
-  assignRadii(){
-    for(let type of ['artery','vein']){
-      let ids=this.trees[type],weights=new Float32Array(this.nodes.length);
-      for(let k=ids.length-1;k>=0;k--){
-        let n=this.nodes[ids[k]],weight=0;
-        for(let child of n.children)if(this.nodes[child].type===type)weight+=weights[child];
-        weights[n.id]=Math.max(1,weight);
-        n.r=clamp(.0075+.007*Math.pow(weights[n.id],.37),.009,.067);
-      }
-    }
-    for(let e of this.edges){
-      if(e.type!=='capillary')e.r=(this.nodes[e.a].r+this.nodes[e.b].r)*.5;
-    }
-  }
-  findLeaves(type){
-    return this.trees[type].filter(id=>this.nodes[id].children.length===0);
-  }
-  addCapillaryBridge(a,b){
-    const start=this.nodes[a].p,end=this.nodes[b].p;
-    let last=a,steps=3+Math.floor(Math.sqrt(distance2(start,end))*5);
-    for(let i=1;i<steps;i++){
-      let t=i/steps;
-      let p=add(mul(start,1-t),mul(end,t));
-      p.x+=(this.rand()-.5)*.015;p.y+=(this.rand()-.5)*.015;p.z+=(this.rand()-.5)*.015;
-      if(!this.inTissue(p))p=this.findInside(mul(p,.83));
-      last=this.addNode(p,'capillary',last);
-    }
-    let edge=this.edges.length;
-    let id=last;
-    const l=Math.sqrt(distance2(this.nodes[id].p,end));
-    this.edges.push({a:id,b,type:'capillary',len:Math.max(.005,l),r:.010,flow:0});
-    for(let i=edge-steps+2;i<this.edges.length;i++)if(this.edges[i])this.edges[i].r=.010;
-    this.bridges++;
-  }
-  connectCapillaries(){
-    const A=this.findLeaves('artery'),V=this.findLeaves('vein');
-    if(!A.length||!V.length)return;
-    // Connect nearby terminal beds. Repeated bridges create true circuits, not dead-end tubes.
-    const shuffled=A.slice().sort(()=>this.rand()-.5);
-    const aim=Math.min(140,Math.max(32,Math.round(this.settings.vascularity*1.05)));
-    const n=Math.min(aim,shuffled.length);
-    let used=new Set();
-    for(let i=0;i<n;i++){
-      const a=shuffled[Math.floor(i*shuffled.length/n)];
-      let best=-1,bestD=Infinity;
-      for(let vid of V){
-        let d=distance2(this.nodes[a].p,this.nodes[vid].p);
-        // Gently favor evenly distributed drainage into return branches.
-        if(used.has(vid))d*=1.1;
-        if(d<bestD){bestD=d;best=vid}
-      }
-      if(best>=0){this.addCapillaryBridge(a,best);used.add(best)}
-    }
-    // Guarantee at least a few vascular connections even in an extremely small tree.
-    while(this.bridges<Math.min(12,A.length)){
-      this.addCapillaryBridge(A[this.bridges%A.length],V[this.bridges%V.length]);
-    }
-  }
-  solveFlow(){
-    let adj=this.nodes.map(()=>[]),maxC=0;
-    for(let e of this.edges){
-      e.conductance=Math.pow(e.r,4)/Math.max(.012,e.len);
-      maxC=Math.max(maxC,e.conductance);
-    }
-    const scale=maxC?1/maxC:1;
-    for(let i=0;i<this.edges.length;i++){
-      let e=this.edges[i];e.conductance*=scale;
-      adj[e.a].push({id:i,other:e.b,g:e.conductance});
-      adj[e.b].push({id:i,other:e.a,g:e.conductance});
-    }
-    const arterialRoot=this.roots.artery,venousRoot=this.roots.vein;
-    this.nodes[arterialRoot].pressure=1;this.nodes[venousRoot].pressure=0;
-    for(let iter=0;iter<700;iter++){
-      let change=0;
-      for(let i=0;i<this.nodes.length;i++){
-        if(i===arterialRoot||i===venousRoot)continue;
-        let node=this.nodes[i],links=adj[i];
-        let g=0,target=0;
-        for(let j=0;j<links.length;j++){
-          let item=links[j];g+=item.g;target+=item.g*this.nodes[item.other].pressure;
-        }
-        if(g>0){
-          let p=clamp(node.pressure+(target/g-node.pressure)*1.35,0,1);
-          change=Math.max(change,Math.abs(p-node.pressure));node.pressure=p;
-        }
-      }
-      if(iter>75&&change<.000015)break;
-    }
-    let maximum=0;
-    for(let i=0;i<this.edges.length;i++){
-      let e=this.edges[i];
-      e.flow=e.conductance*(this.nodes[e.a].pressure-this.nodes[e.b].pressure);
-      maximum=Math.max(maximum,Math.abs(e.flow));
-    }
-    for(let n of this.nodes)n.out=[];
-    for(let i=0;i<this.edges.length;i++){
-      const e=this.edges[i];if(Math.abs(e.flow)<maximum*1e-9)continue;
-      let from=e.flow>=0?e.a:e.b,to=e.flow>=0?e.b:e.a;
-      this.nodes[from].out.push({edge:i,to,weight:Math.abs(e.flow)});
-    }
-    this.maxFlow=maximum;
-    // One connected arterial tree and one connected venous tree joined by bridges:
-    // each additional artery -> vein bridge adds an independent closed circuit.
-    this.flowLoops=Math.max(0,this.edges.length-this.nodes.length+1);
-  }
-  // Oxygen-deficit feedback pass: sample unsupplied tissue voxels (rather than
-  // just the initial attractors), then add connected capillary supply/return paths.
-  // This reinforces the network until the requested tissue is actually served.
-  rescueOxygen(){
-    const N=this.N;
-    const dist2=(a,b)=>sq(a.x-b.x)+sq(a.y-b.y)+sq(a.z-b.z);
-    const nearest=(type,p)=>{
-      let best=-1,bestD=Infinity;
-      for(let id of this.trees[type]){
-        let d=dist2(this.nodes[id].p,p);
-        if(d<bestD){best=id;bestD=d}
-      }
-      return best;
-    };
-    const bridgeThrough=target=>{
-      const a=nearest('artery',target),b=nearest('vein',target);
-      if(a<0||b<0)return;
-      const start=this.nodes[a].p,end=this.nodes[b].p;
-      let previous=a;
-      for(let [p,q] of [[start,target],[target,end]]){
-        const steps=Math.max(1,Math.ceil(Math.sqrt(dist2(p,q))/.050));
-        for(let k=1;k<=steps;k++){
-          const t=k/steps;
-          let next={x:mix(p.x,q.x,t),y:mix(p.y,q.y,t),z:mix(p.z,q.z,t)};
-          if(!this.inTissue(next))next=this.findInside(next);
-          if(p===target&&k===steps){
-            this.edges.push({a:previous,b,type:'capillary',len:Math.max(.005,Math.sqrt(dist2(this.nodes[previous].p,end))),r:.010,flow:0});
-          }else previous=this.addNode(next,'capillary',previous);
-        }
-      }
-      this.bridges++;
-    };
-    const previousTargets=[];
-    for(let pass=0;pass<7&&this.coverage<97;pass++){
-      const deprived=[];
-      for(let z=1;z<N-1;z+=2)for(let y=1;y<N-1;y+=2)for(let x=1;x<N-1;x+=2){
-        let i=this.index(x,y,z);
-        if(this.density[i]<.19)continue;
-        const deficit=this.demand[i]*.58-this.oxygen[i];
-        if(deficit<=0)continue;
-        deprived.push({p:{x:x/(N-1)*2-1,y:y/(N-1)*2-1,z:z/(N-1)*2-1},deficit});
-      }
-      deprived.sort((a,b)=>b.deficit-a.deficit);
-      let chosen=[];
-      for(let a of deprived){
-        if(chosen.length>=36)break;
-        if(chosen.some(p=>dist2(p,a.p)<sq(.13)))continue;
-        if(previousTargets.some(p=>dist2(p,a.p)<sq(.10)))continue;
-        chosen.push(a.p);
-        bridgeThrough(a.p);
-      }
-      if(!chosen.length)break;
-      previousTargets.push(...chosen);
-      this.solveFlow();
-      this.evaluateOxygen(true);
-    }
-  }
-  finish(){
-    if(this.finished)return;
-    this.assignRadii();
-    this.connectCapillaries();
-    this.solveFlow();
-    this.evaluateOxygen(true);
-    this.rescueOxygen();
-    this.finished=true;
-  }
-  evaluateOxygen(perfused){
-    const N=this.N,size=this.size,dist=new Float32Array(size);
-    dist.fill(999);
-    let capMaximum=0;
-    for(let e of this.edges)if(e.type==='capillary')capMaximum=Math.max(capMaximum,Math.abs(e.flow));
-    for(let e of this.edges){
-      if(e.type==='vein')continue;
-      if(perfused&&e.type==='capillary'&&Math.abs(e.flow)<capMaximum*.0001)continue;
-      const a=this.nodes[e.a].p,b=this.nodes[e.b].p;
-      let steps=Math.max(1,Math.ceil(e.len*(N-1)*.9));
-      let initial=e.type==='artery'?2.2:0;
-      for(let k=0;k<=steps;k++){
-        const t=k/steps;
-        let x=clamp(Math.round((mix(a.x,b.x,t)*.5+.5)*(N-1)),0,N-1);
-        let y=clamp(Math.round((mix(a.y,b.y,t)*.5+.5)*(N-1)),0,N-1);
-        let z=clamp(Math.round((mix(a.z,b.z,t)*.5+.5)*(N-1)),0,N-1);
-        let i=this.index(x,y,z);
-        if(this.density[i]>.08)dist[i]=Math.min(dist[i],initial);
-      }
-    }
-    const slice=N*N;
-    // Two directional voxel-neighborhood sweeps propagate the shortest Manhattan
-    // transport distance from perfused segments through the volume texture.
-    for(let z=0;z<N;z++)for(let y=0;y<N;y++)for(let x=0;x<N;x++){
-      let i=this.index(x,y,z),d=dist[i];
-      if(x)d=Math.min(d,dist[i-1]+1);
-      if(y)d=Math.min(d,dist[i-N]+1);
-      if(z)d=Math.min(d,dist[i-slice]+1);
-      dist[i]=d;
-    }
-    for(let z=N-1;z>=0;z--)for(let y=N-1;y>=0;y--)for(let x=N-1;x>=0;x--){
-      let i=this.index(x,y,z),d=dist[i];
-      if(x<N-1)d=Math.min(d,dist[i+1]+1);
-      if(y<N-1)d=Math.min(d,dist[i+N]+1);
-      if(z<N-1)d=Math.min(d,dist[i+slice]+1);
-      dist[i]=d;
-    }
-    let range=3.3+this.settings.reach*.107,good=0,received=0;
-    for(let i=0;i<size;i++){
-      if(this.density[i]===0){this.oxygen[i]=0;continue}
-      const d=dist[i];
-      const O=clamp((1-d/range)*1.17-this.demand[i]*.14,0,1);
-      this.oxygen[i]=O;
-      if(O>=this.demand[i]*.54)good++;
-      if(O>.25)received++;
-    }
-    this.coverage=this.livingVoxels?100*good/this.livingVoxels:0;
-    this.perfused=this.livingVoxels?100*received/this.livingVoxels:0;
-    for(let i=0;i<size;i++){
-      const j=i*4;
-      this.bytes[j]=Math.round(this.density[i]*255);
-      this.bytes[j+1]=Math.round(this.oxygen[i]*255);
-      this.bytes[j+2]=Math.round(clamp((3.5-dist[i])/3.5,0,1)*255);
-      this.bytes[j+3]=this.density[i]>0?255:0;
-    }
-  }
-  edgeCount(type){return this.edges.reduce((a,e)=>a+(e.type===type?1:0),0)}
-  pickNext(nodeId){
-    const choices=this.nodes[nodeId].out;
-    if(!choices.length)return null;
-    let sum=0;
-    for(let i=0;i<choices.length;i++)sum+=Math.sqrt(choices[i].weight);
-    let sample=this.rand()*sum;
-    for(let i=0;i<choices.length;i++){
-      let c=choices[i];sample-=Math.sqrt(c.weight);
-      if(sample<=0)return c;
-    }
-    return choices[choices.length-1];
-  }
+ }
 }
