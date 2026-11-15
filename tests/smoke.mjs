@@ -71,6 +71,23 @@ for(const organ of organs){
  assert.ok(m.lumenCount>400,organ+' lacked lumen voxels');
  assert.ok(m.capillaryCount>100,organ+' lacked capillary voxels');
  assert.ok(m.wallCount>0,organ+' lacks voxel encapsulating vessel walls');
+ assert.ok(m.hairBranchCount>=12,organ+' lacks a hair-thin venular network');
+ assert.ok(m.hairVenuleCount>=40,organ+' lacks physically modeled hairline lumen voxels');
+ let marked=0,contacts=0;
+ for(let i=0;i<m.size;i++){
+  if(!m.hairVoxels[i])continue;
+  marked++;
+  assert.equal(m.matter[i],MAT.VEIN,
+   organ+' hairline vessel is not a real venous fluid voxel');
+  const [x,y,z]=m.xyz(i);
+  for(const [dx,dy,dz] of [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]]){
+   if(!m.inside(x+dx,y+dy,z+dz))continue;
+   if(m.matter[m.index(x+dx,y+dy,z+dz)]===MAT.CAPILLARY)contacts++;
+  }
+ }
+ assert.equal(marked,m.hairVenuleCount,organ+' fine-vessel occupancy is inconsistent');
+ assert.ok(contacts>0,organ+' hairline veins never connect to capillary beds');
+
  // The user's regression was a rectangular vascular scaffold even when
  // target endpoints were diagonal. Verify the actual *curved rasterization*
  // and that capillary beds do not multiply into a full rectilinear lattice.
