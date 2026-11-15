@@ -50,6 +50,8 @@ export class VolumeModel{
   this.occupied=0;this.lumenCount=0;this.capillaryCount=0;this.wallCount=0;
   this.inlet=-1;this.outlet=-1;this.tips=[];this.iteration=0;this.maxIterations=60;
   this.vesselSites={3:[],4:[]};this.growthPlan={3:[],4:[]};
+  this.branchParent=new Int32Array(SIZE);this.branchParent.fill(-1);
+  this.branchLoad=new Float32Array(SIZE);this.trunkVoxels=0;
   this.diagonalVeinSteps=0;this.diagonalArterySteps=0;
   this.finished=false;this.coverage=0;this.perfused=0;this.flowingVoxels=0;this.flowRate=0;
   this.fluidTime=0;this.fluidClock=0;this.flowSolved=false;
@@ -223,6 +225,42 @@ export class VolumeModel{
    if(!this.isFluid(index))this.setFluid(index,MAT.CAPILLARY);
   }
   return true;
+ }
+ // Mature conducting trunks according to the metabolic work of downstream
+ // branch territories. High-load parent channels become a little wider,
+ // while fine terminal branches remain at single-voxel resolution.
+ // This is the coarse voxel analogue of demand-dependent vessel caliber.
+ matureTrunks(){
+  const assigned=[];
+  for(let type of [MAT.ARTERY,MAT.VEIN]){
+   const sites=this.vesselSites[type];
+   // Every new branch is appended after its parent; reverse-order accumulation
+   // yields downstream demand that must pass through each parent voxel.
+   for(let k=sites.length-1;k>=0;k--){
+    const i=sites[k],p=this.branchParent[i];
+    if(p>=0&&this.matter[p]===type)this.branchLoad[p]+=this.branchLoad[i];
+   }
+   for(let i of sites){
+    const load=this.branchLoad[i],r=load>36?2:load>12?1.6:load>4?1.16:0;
+    if(!r)continue;
+    const [x,y,z]=this.xyz(i);
+    for(let dz=-2;dz<=2;dz++)for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++){
+     const rr=dx*dx+dy*dy+dz*dz;
+     if(rr===0||rr>r*r)continue;
+     const xx=x+dx,yy=y+dy,zz=z+dz;
+     if(!this.inside(xx,yy,zz))continue;
+     const j=this.index(xx,yy,zz);
+     if(this.matter[j]!==MAT.TISSUE&&this.matter[j]!==MAT.DENSE)continue;
+     if(this.depth[j]<.042)continue;
+     assigned.push([j,type]);
+    }
+   }
+  }
+  for(let [i,type] of assigned){
+   if(this.matter[i]===MAT.TISSUE||this.matter[i]===MAT.DENSE){
+    if(this.setFluid(i,type))this.trunkVoxels++;
+   }
+  }
  }
  connectCapillaryBeds(rounds=5){
   let dA=this.distanceFrom(MAT.ARTERY),dV=this.distanceFrom(MAT.VEIN);
@@ -418,8 +456,9 @@ export class VolumeModel{
  }
  finish(){
   if(this.finished)return;
+  this.matureTrunks();
   this.recomputeCoverage();
-  this.connectCapillaryBeds(6);
+  this.connectCapillaryBeds(8);
   this.rebuildWall();
   this.solvePressure();
   this.recomputeCoverage(true);
