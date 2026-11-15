@@ -10,6 +10,7 @@ const state=()=>{
   coverage:m.coverage,perfused:m.perfused,
   lumenCount:m.lumenCount,capillaryCount:m.capillaryCount,
   wallCount:m.wallCount,flowingVoxels:m.flowingVoxels,
+  diagonalArterySteps:m.diagonalArterySteps,diagonalVeinSteps:m.diagonalVeinSteps,
   occupied:m.occupied,pressureIterations:m.pressureIterations||0
  };
 };
