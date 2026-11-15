@@ -132,7 +132,7 @@ export class VolumeModel{
   this.matter[i]=type;this.density[i]=type===MAT.CAPILLARY?.67:.79;
   this.lumenCount++;if(type===MAT.CAPILLARY)this.capillaryCount++;
   this.pressure[i]=type===MAT.ARTERY?.82:type===MAT.VEIN?.18:.50;
-  this.bloodOxygen[i]=type===MAT.ARTERY?1:type===MAT.VEIN?.50:.80;
+  this.bloodOxygen[i]=type===MAT.ARTERY?(this.settings.organ==='lung'?.53:1):type===MAT.VEIN?.70:.80;
   this.nutrient[i]=.85;
   this.oxygen[i]=.9;
   return true;
@@ -292,8 +292,8 @@ export class VolumeModel{
    const chosen=[],budget=round===0?56:38;
    for(let c of candidates){
     if(chosen.length>=budget)break;
-    if(selected.some(p=>sq(p.x-c.x)+sq(p.y-c.y)+sq(p.z-c.z)<26))continue;
-    if(chosen.some(p=>sq(p.x-c.x)+sq(p.y-c.y)+sq(p.z-c.z)<38))continue;
+    if(selected.some(p=>sq(p.x-c.x)+sq(p.y-c.y)+sq(p.z-c.z)<(this.settings.organ==='heart'?13:26)))continue;
+    if(chosen.some(p=>sq(p.x-c.x)+sq(p.y-c.y)+sq(p.z-c.z)<(this.settings.organ==='heart'?22:38)))continue;
     if(this.connectThrough(c.i,dA,dV)){chosen.push(c);created++;}
    }
    if(!chosen.length)break;
@@ -480,7 +480,7 @@ export class VolumeModel{
   const m=this.matter,dye=this.dye,plasma=this.bloodOxygen,oxygen=this.oxygen,nutrients=this.nutrient;
   const pulse=1+.22*Math.sin(this.fluidTime*7.0);
   const dyeValue=.5+.5*Math.sin(this.fluidTime*3.2);
-  dye[this.inlet]=dyeValue;plasma[this.inlet]=1;
+  dye[this.inlet]=dyeValue;plasma[this.inlet]=this.settings.organ==='lung'?.53:1;
   const dd=new Float32Array(SIZE),do2=new Float32Array(SIZE);
   const speed=this.flowRate?(.23/this.flowRate)*pulse:0;
   const viscosity=clamp(this.settings.viscosity/100,0,1);
@@ -517,7 +517,12 @@ export class VolumeModel{
     if(this.isFluid(j)){
      // Vessel wall is metabolically active but permeable to oxygen.
      const exchange=t===MAT.CAPILLARY?.105:t===MAT.ARTERY?.025:.008;
-     totalO+=exchange*(plasma[j]-oxygen[i]);
+     if(this.settings.organ==='lung'&&this.layers[i]===ZONE.ALVEOLI){
+      // Alveolar exchange oxygenates pulmonary blood; it is not a systemic
+      // artery arriving at this bed already fully oxygenated.
+      totalO+=.035*(.99-oxygen[i]);
+      do2[j]+=.018*Math.max(0,.99-plasma[j]);
+     }else totalO+=exchange*(plasma[j]-oxygen[i]);
      totalN+=exchange*.85*(.90-nutrients[i]);
      // Blood loses oxygen to nearby tissue. Flux is bounded per fluid voxel.
      if(t===MAT.CAPILLARY)do2[j]-=Math.max(0,plasma[j]-oxygen[i])*.004;
@@ -541,6 +546,27 @@ export class VolumeModel{
   }
   this.coverage=count?covered/count*100:0;
   this.perfused=count?perfused/count*100:0;
+ }
+ // Runtime inspection of tissue viability by actual anatomical compartment.
+ // Unlike global coverage, these values reveal regions that are not supplied.
+ layerMetrics(){
+  const stats=new Map();
+  for(const [name,id] of this.zoneLabels){
+   stats.set(id,{id,name,count:0,oxygen:0,demand:0,covered:0,conducting:0});
+  }
+  for(let i=0;i<SIZE;i++){
+   const id=this.layers[i],row=stats.get(id);
+   if(!row||!this.matter[i])continue;
+   if(this.isFluid(i)){row.conducting++;continue;}
+   row.count++;row.oxygen+=this.oxygen[i];row.demand+=this.demand[i];
+   if(this.oxygen[i]>=this.demand[i]*.48)row.covered++;
+  }
+  return Array.from(stats.values()).map(s=>({
+   id:s.id,name:s.name,count:s.count,lumen:s.conducting,
+   meanOxygen:s.count?s.oxygen/s.count:0,
+   meanDemand:s.count?s.demand/s.count:0,
+   coverage:s.count?100*s.covered/s.count:0
+  }));
  }
  updateTexture(){
   const f=this.fieldBytes,m=this.materialBytes,v=this.flowBytes;
