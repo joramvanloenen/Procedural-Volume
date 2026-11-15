@@ -1,4 +1,4 @@
-name: Publish Procedural Volume
+name: Test Procedural Volume
 on:
   push:
     branches: [main]
@@ -6,41 +6,18 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: github-pages
-  cancel-in-progress: true
 
 jobs:
-  deploy:
+  test:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Verify native JavaScript syntax
+      - name: Check JavaScript syntax
         run: |
           node --check architecture.js
           node --check simulation.js
           node --check main.js
           node --check worker.js
-      - name: Verify connected organ perfusion
+      - name: Verify anatomical vascular routing and conservation
         run: node tests/smoke.mjs
-      - name: Stage standalone static site
-        run: |
-          mkdir -p dist
-          cp index.html style.css main.js simulation.js architecture.js worker.js dist/
-          touch dist/.nojekyll
-      - name: Configure GitHub Pages
-        uses: actions/configure-pages@v5
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v4
-        with:
-          path: dist
-      - name: Publish to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
