@@ -16,6 +16,7 @@ jobs:
       - name: Check JavaScript syntax
         run: |
           node --check vascular-geometry.js
+          node --check microvasculature.js
           node --check architecture.js
           node --check simulation.js
           node --check main.js
