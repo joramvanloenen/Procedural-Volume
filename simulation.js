@@ -321,34 +321,77 @@ export class VolumeModel{
   this.perfused=voxels?100*perf/voxels:0;
  }
  solvePressure(){
-  // Solve the discrete incompressible pressure potential on the lumen mask.
-  // Faces shared with tissue and vessel walls are no-flux boundaries.
-  // Fixed pressure at inlet & outlet provides circulation drive.
+  // Matrix-free preconditioned conjugate gradients solve the discrete
+  // finite-volume pressure Poisson equation. Fluid/solid faces are impermeable.
+  // Pressure boundary values: a single artery inlet = 1, vein outlet = 0.
+  // This is an incompressible, viscosity-damped low-Reynolds-number flow model.
   const p=this.pressure,m=this.matter,rootA=this.inlet,rootV=this.outlet;
   const permeability=i=>m[i]===MAT.CAPILLARY?.30:1;
   const indices=[];
-  for(let i=0;i<SIZE;i++)if(this.isFluid(i)&&i!==rootA&&i!==rootV)indices.push(i);
-  p[rootA]=1;p[rootV]=0;
-  for(let it=0;it<460;it++){
-   let worst=0;
-   // Alternating sweep reduces lattice anisotropy and pressure residual.
-   const backwards=Boolean(it&1);
-   for(let t=0;t<indices.length;t++){
-    const i=indices[backwards?indices.length-1-t:t];
-    let total=0,weight=0;
-    const k0=permeability(i);
-    for(let o of step6){
-     let j=i+o;if(!this.isFluid(j))continue;
-     let g=.5*(k0+permeability(j));
-     total+=g*p[j];weight+=g;
-    }
-    if(weight===0)continue;
-    let target=total/weight;
-    let next=clamp(p[i]+(target-p[i])*1.38,0,1);
-    worst=Math.max(worst,Math.abs(p[i]-next));p[i]=next;
+  const diag=new Float64Array(SIZE),b=new Float64Array(SIZE);
+  for(let i=0;i<SIZE;i++){
+   if(!this.isFluid(i)||i===rootA||i===rootV)continue;
+   indices.push(i);
+   const g0=permeability(i);
+   for(let k=0;k<6;k++){
+    const j=i+step6[k];
+    if(!this.isFluid(j))continue;
+    const g=(g0+permeability(j))*.5;
+    diag[i]+=g;
+    if(j===rootA)b[i]+=g;
    }
-   if(it>160&&worst<.00004)break;
   }
+  // Starting from a neutral field, solve A*p=b with Jacobi preconditioning.
+  const x=new Float64Array(SIZE),r=new Float64Array(SIZE),
+    direction=new Float64Array(SIZE),Ad=new Float64Array(SIZE);
+  for(let i of indices)x[i]=.5;
+  const apply=(src,dst)=>{
+   for(let i of indices){
+    let sum=diag[i]*src[i],g0=permeability(i);
+    for(let k=0;k<6;k++){
+     const j=i+step6[k];
+     if(j===rootA||j===rootV||!this.isFluid(j))continue;
+     sum-=(g0+permeability(j))*.5*src[j];
+    }
+    dst[i]=sum;
+   }
+  };
+  apply(x,Ad);
+  let rr=0,initial=0;
+  for(let i of indices){
+   r[i]=b[i]-Ad[i];
+   let zi=r[i]/Math.max(diag[i],1e-8);
+   direction[i]=zi;rr+=r[i]*zi;
+   initial+=r[i]*r[i];
+  }
+  const tolerance=Math.sqrt(initial)*1e-6;
+  let count=0;
+  for(let iter=0;iter<1100&&rr>1e-24;iter++){
+   apply(direction,Ad);
+   let denom=0;
+   for(let i of indices)denom+=direction[i]*Ad[i];
+   if(!(denom>1e-25))break;
+   let alpha=rr/denom;
+   let err=0;
+   for(let i of indices){
+    x[i]+=alpha*direction[i];
+    r[i]-=alpha*Ad[i];err+=r[i]*r[i];
+   }
+   count=iter+1;
+   if(Math.sqrt(err)<tolerance)break;
+   let next=0;
+   for(let i of indices){
+    const zi=r[i]/Math.max(diag[i],1e-8);
+    Ad[i]=zi;
+    next+=r[i]*zi;
+   }
+   let beta=next/rr;
+   for(let i of indices)direction[i]=Ad[i]+beta*direction[i];
+   rr=next;
+  }
+  p[rootA]=1;p[rootV]=0;
+  for(let i of indices)p[i]=clamp(x[i],0,1);
+  this.pressureIterations=count;
   this.flowRate=0;this.flowingVoxels=0;
   const fx=this.faceX,fy=this.faceY,fz=this.faceZ;
   fx.fill(0);fy.fill(0);fz.fill(0);
@@ -357,15 +400,14 @@ export class VolumeModel{
    const x=i%N,y=Math.floor(i/N)%N,z=Math.floor(i/N2);
    for(let k=0;k<3;k++){
     if((k===0&&x>=N-1)||(k===1&&y>=N-1)||(k===2&&z>=N-1))continue;
-    const j=i+[1,N,N2][k];
-    if(!this.isFluid(j))continue;
+    const j=i+[1,N,N2][k];if(!this.isFluid(j))continue;
     const conductance=(permeability(i)+permeability(j))*.5;
     const flow=conductance*(p[i]-p[j]);
     (k===0?fx:k===1?fy:fz)[i]=flow;
     this.flowRate=Math.max(this.flowRate,Math.abs(flow));
    }
   }
-  const speed=this.flowRate? .56/this.flowRate:0;
+  const speed=this.flowRate?.56/this.flowRate:0;
   for(let i=0;i<SIZE;i++){
    if(!this.isFluid(i))continue;
    const x=i%N,y=Math.floor(i/N)%N,z=Math.floor(i/N2);
