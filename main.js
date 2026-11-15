@@ -87,6 +87,8 @@ function updateStats(){
  $('segments').textContent=snapshot.lumenCount.toLocaleString('en-US');
  $('connections').textContent=snapshot.capillaryCount.toLocaleString('en-US');
  $('flowloops').textContent=snapshot.finished?snapshot.flowingVoxels.toLocaleString('en-US'):'—';
+ $('diagonalVeins').textContent=snapshot.diagonalVeinSteps.toLocaleString('en-US');
+ $('diagonalArteries').textContent=snapshot.diagonalArterySteps.toLocaleString('en-US');
  $('perfused').textContent=snapshot.perfused.toFixed(0)+'%';
  $('growthPercent').textContent=Math.round(snapshot.iteration/snapshot.maxIterations*100)+'%';
  $('growthFill').style.width=Math.round(snapshot.iteration/snapshot.maxIterations*100)+'%';
