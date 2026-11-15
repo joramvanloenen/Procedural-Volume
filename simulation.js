@@ -337,12 +337,70 @@ export class VolumeModel {
     // each additional artery -> vein bridge adds an independent closed circuit.
     this.flowLoops=Math.max(0,this.edges.length-this.nodes.length+1);
   }
+  // Oxygen-deficit feedback pass: sample unsupplied tissue voxels (rather than
+  // just the initial attractors), then add connected capillary supply/return paths.
+  // This reinforces the network until the requested tissue is actually served.
+  rescueOxygen(){
+    const N=this.N;
+    const dist2=(a,b)=>sq(a.x-b.x)+sq(a.y-b.y)+sq(a.z-b.z);
+    const nearest=(type,p)=>{
+      let best=-1,bestD=Infinity;
+      for(let id of this.trees[type]){
+        let d=dist2(this.nodes[id].p,p);
+        if(d<bestD){best=id;bestD=d}
+      }
+      return best;
+    };
+    const bridgeThrough=target=>{
+      const a=nearest('artery',target),b=nearest('vein',target);
+      if(a<0||b<0)return;
+      const start=this.nodes[a].p,end=this.nodes[b].p;
+      let previous=a;
+      for(let [p,q] of [[start,target],[target,end]]){
+        const steps=Math.max(1,Math.ceil(Math.sqrt(dist2(p,q))/.050));
+        for(let k=1;k<=steps;k++){
+          const t=k/steps;
+          let next={x:mix(p.x,q.x,t),y:mix(p.y,q.y,t),z:mix(p.z,q.z,t)};
+          if(!this.inTissue(next))next=this.findInside(next);
+          if(p===target&&k===steps){
+            this.edges.push({a:previous,b,type:'capillary',len:Math.max(.005,Math.sqrt(dist2(this.nodes[previous].p,end))),r:.010,flow:0});
+          }else previous=this.addNode(next,'capillary',previous);
+        }
+      }
+      this.bridges++;
+    };
+    const previousTargets=[];
+    for(let pass=0;pass<7&&this.coverage<97;pass++){
+      const deprived=[];
+      for(let z=1;z<N-1;z+=2)for(let y=1;y<N-1;y+=2)for(let x=1;x<N-1;x+=2){
+        let i=this.index(x,y,z);
+        if(this.density[i]<.19)continue;
+        const deficit=this.demand[i]*.58-this.oxygen[i];
+        if(deficit<=0)continue;
+        deprived.push({p:{x:x/(N-1)*2-1,y:y/(N-1)*2-1,z:z/(N-1)*2-1},deficit});
+      }
+      deprived.sort((a,b)=>b.deficit-a.deficit);
+      let chosen=[];
+      for(let a of deprived){
+        if(chosen.length>=36)break;
+        if(chosen.some(p=>dist2(p,a.p)<sq(.13)))continue;
+        if(previousTargets.some(p=>dist2(p,a.p)<sq(.10)))continue;
+        chosen.push(a.p);
+        bridgeThrough(a.p);
+      }
+      if(!chosen.length)break;
+      previousTargets.push(...chosen);
+      this.solveFlow();
+      this.evaluateOxygen(true);
+    }
+  }
   finish(){
     if(this.finished)return;
     this.assignRadii();
     this.connectCapillaries();
     this.solveFlow();
     this.evaluateOxygen(true);
+    this.rescueOxygen();
     this.finished=true;
   }
   evaluateOxygen(perfused){
