@@ -26,12 +26,13 @@ jobs:
         run: |
           node --check simulation.js
           node --check main.js
+          node --check worker.js
       - name: Verify connected organ perfusion
         run: node tests/smoke.mjs
       - name: Stage standalone static site
         run: |
           mkdir -p dist
-          cp index.html style.css main.js simulation.js dist/
+          cp index.html style.css main.js simulation.js worker.js dist/
           touch dist/.nojekyll
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
