@@ -19,3 +19,13 @@
 .region-sub{font:9px 'DM Mono',monospace;color:#628182;line-height:1.5}
 .tab-group button{font-size:9px;padding:9px 0}
 #zoneSelect{margin-bottom:12px}
+
+/* Convenient vessel-only scan, especially useful on portrait mobile devices */
+.viewer-quick{display:flex;align-items:center;gap:8px;pointer-events:auto}
+.viewport-bottom .viewer-quick button{padding:7px 9px;background:rgba(12,28,36,.84);
+ border:1px solid #345052;border-radius:3px;font-size:9px;letter-spacing:.02em}
+.viewport-bottom .viewer-quick button.active{border-color:#88b8b3;color:#e3f5de;background:#213f40}
+@media(max-width:650px){.viewport-bottom{flex-wrap:wrap;row-gap:10px}
+ .viewport-bottom>div:first-child{width:100%;font-size:7px;opacity:.72}
+ .viewer-quick{margin-left:auto;gap:6px}
+ .viewport-bottom .viewer-quick button{padding:7px 6px;font-size:8px}}
