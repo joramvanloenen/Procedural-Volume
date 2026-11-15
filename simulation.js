@@ -6,6 +6,7 @@
 // finite-volume pressure/transport model (not a full Navier-Stokes solver).
 import {applyArchitecture,buildRegionalTargets,integrateVesselRoute,ZONE} from './architecture.js?v=scan-hires-20261115-r3';
 import {DIRECTIONS_26,voxelizeCurve} from './vascular-geometry.js?v=scan-hires-20261115-r3';
+import {sproutFineVenules} from './microvasculature.js?v=scan-hires-20261115-r3';
 export const GRID=80;
 const N=GRID, N2=N*N, SIZE=N*N*N;
 const clamp=(x,a,b)=>Math.min(b,Math.max(a,x));
@@ -49,6 +50,8 @@ export class VolumeModel{
   this.materialBytes=new Uint8Array(SIZE);
   this.flowBytes=new Uint8Array(SIZE*4);
   this.smoothVesselBytes=new Uint8Array(SIZE*4);
+  this.hairVoxels=new Uint8Array(SIZE);
+  this.hairVenuleCount=0;this.hairBranchCount=0;this.hairConnectedCount=0;
   this.geometryVersion=0;this.smoothedVersion=-1;
   this.occupied=0;this.lumenCount=0;this.capillaryCount=0;this.wallCount=0;
   this.inlet=-1;this.outlet=-1;this.tips=[];this.iteration=0;this.maxIterations=60;
@@ -586,6 +589,7 @@ export class VolumeModel{
   this.matureTrunks();
   this.recomputeCoverage();
   this.connectCapillaryBeds(5);
+  sproutFineVenules(this,{limit:Math.round(42+this.settings.vascularity*.72)});
   this.ensureCirculation();
   this.rebuildWall();
   this.solvePressure();
