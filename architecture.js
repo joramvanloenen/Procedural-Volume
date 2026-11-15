@@ -189,10 +189,49 @@ class BinaryHeap{
   while((i*2+1)<a.length){let j=i*2+1,r=j+1;if(r<a.length&&a[r].score<a[j].score)j=r;if(last.score<=a[j].score)break;a[i]=a[j];i=j}a[i]=last;return top}
  get length(){return this.data.length}
 }
-// Multi-source, weighted Dijkstra: connect a target to the *lowest cost* node
-// of the entire existing vascular tree, not an arbitrarily chosen nearest node.
-// Pre-existing vessels are absorbing terminals; no free-floating branch can occur.
-// Per-voxel traversing cost includes actual matrix density / layer resistance.
+// A smooth voxel centerline must use edge/corner moves as well as face moves.
+// Dijkstra expands all 26 directions, weighted by Euclidean length and local
+// tissue cost. A diagonal candidate is valid ONLY when its corner crossing can
+// be resolved to face-adjacent intermediate fluid voxels. Thus both the path
+// and its simulated flow remain fully connected.
+const directions26=[];
+for(let z=-1;z<=1;z++)for(let y=-1;y<=1;y++)for(let x=-1;x<=1;x++){
+ if(!(x||y||z))continue;
+ const count=Math.abs(x)+Math.abs(y)+Math.abs(z);
+ directions26.push({x,y,z,count,len:Math.sqrt(count)});
+}
+const orders3=[[0,1,2],[0,2,1],[1,0,2],[1,2,0],[2,0,1],[2,1,0]];
+function legal(model,type,i){
+ const m=model.matter[i];
+ return m===1||m===2||m===type;
+}
+// Only a physical face-linked staircase is added where a diagonal segment
+// crosses the grid. The 3D centerline itself is not limited to axis directions.
+function faceConnector(model,type,from,to){
+ const [x,y,z]=model.xyz(from),[tx,ty,tz]=model.xyz(to);
+ const dx=tx-x,dy=ty-y,dz=tz-z;
+ if(Math.max(Math.abs(dx),Math.abs(dy),Math.abs(dz))!==1)return null;
+ const axes=[];
+ if(dx)axes.push([dx,0,0]);
+ if(dy)axes.push([0,dy,0]);
+ if(dz)axes.push([0,0,dz]);
+ if(axes.length===1)return [];
+ const permutations=axes.length===2?[[0,1],[1,0]]:orders3;
+ let best=null,lowest=Infinity;
+ for(const order of permutations){
+  let cx=x,cy=y,cz=z,cost=0,bridge=[],valid=true;
+  for(let k=0;k<axes.length-1;k++){
+   const a=axes[order[k]];cx+=a[0];cy+=a[1];cz+=a[2];
+   if(!model.inside(cx,cy,cz)){valid=false;break;}
+   const index=model.index(cx,cy,cz);
+   if(!legal(model,type,index)){valid=false;break;}
+   bridge.push(index);
+   cost+=model.matter[index]===type?.05:1+model.resistance[index]*.30;
+  }
+  if(valid&&cost<lowest){best=bridge;lowest=cost;}
+ }
+ return best;
+}
 export function routeInMatter(model,type,target){
  if(model.matter[target]===type)return [];
  const SIZE=model.size,N=model.N;
@@ -202,68 +241,90 @@ export function routeInMatter(model,type,target){
  };
  const state=model.routingScratch;
  state.stamp++;
- if(state.stamp===4294967295){
-  state.stamp=1;state.seen.fill(0);state.closed.fill(0);
- }
+ if(state.stamp===4294967295){state.stamp=1;state.seen.fill(0);state.closed.fill(0);}
  const stamp=state.stamp,g=state.cost,parent=state.parent,
   seen=state.seen,closed=state.closed;
  const open=new BinaryHeap();
  seen[target]=stamp;g[target]=0;parent[target]=-1;open.push(target,0);
  let found=-1,steps=0;
- while(open.length&&steps++<100000){
+ while(open.length&&steps++<140000){
   const item=open.pop(),i=item.node;
   if(closed[i]===stamp)continue;
   closed[i]=stamp;
   if(model.matter[i]===type){found=i;break;}
   const x=i%N,y=Math.floor(i/N)%N,z=Math.floor(i/(N*N));
   if(!model.inside(x,y,z))continue;
-  for(const d of stepDirs){
-   const xx=x+d[0],yy=y+d[1],zz=z+d[2];
+  const previous=parent[i];
+  const pdx=previous<0?0:Math.sign(i%N-previous%N);
+  const pdy=previous<0?0:Math.sign(Math.floor(i/N)%N-Math.floor(previous/N)%N);
+  const pdz=previous<0?0:Math.sign(Math.floor(i/(N*N))-Math.floor(previous/(N*N)));
+  for(const d of directions26){
+   const xx=x+d.x,yy=y+d.y,zz=z+d.z;
    if(!model.inside(xx,yy,zz))continue;
-   const j=cell(xx,yy,zz),matter=model.matter[j];
-   if(!matter||matter===5||matter===6||matter===3&&type!==3||matter===4&&type!==4||closed[j]===stamp)continue;
-   const previous=parent[i],lastDir=previous<0?0:
-    (i-previous)===(j-i)?1:0;
-   const matrixCost=matter===type?.08:
-    1+model.resistance[j]*.35+(lastDir?0:.04)+
-    .08/(.5+(type===3?model.supplyAffinity[j]:model.drainAffinity[j]));
-   const proposed=g[i]+matrixCost;
+   const j=model.index(xx,yy,zz);
+   if(closed[j]===stamp||!legal(model,type,j))continue;
+   // A corner-only touch is not a physical lumen connection.
+   // Evaluate all valid one- or two-voxel connectors before allowing it.
+   const bridge=d.count===1?[]:faceConnector(model,type,i,j);
+   if(!bridge)continue;
+   const existing=model.matter[j]===type;
+   const affinity=type===3?model.supplyAffinity[j]:model.drainAffinity[j];
+   const matrix=existing?.09:1+model.resistance[j]*.34+
+     .07/(.5+Math.max(.1,affinity));
+   // A small curvature penalty favors prolonged diagonal directions
+   // over jagged alternating grid-aligned bends.
+   const turn=previous<0?0:(pdx!==d.x||pdy!==d.y||pdz!==d.z?.11:0);
+   const bridgePenalty=bridge.reduce((v,k)=>v+(model.matter[k]===type?.004:.018*model.resistance[k]),0);
+   const proposed=g[i]+d.len*matrix+turn+bridgePenalty;
    if(seen[j]===stamp&&proposed>=g[j])continue;
-   seen[j]=stamp;parent[j]=i;g[j]=proposed;
-   open.push(j,proposed);
+   seen[j]=stamp;parent[j]=i;g[j]=proposed;open.push(j,proposed);
   }
  }
  if(found<0)return null;
- let path=[found],i=found,guard=0;
- while(i!==target&&guard++<SIZE){
-  i=parent[i];if(i<0)return null;path.push(i);
- }
+ const path=[found];let i=found,guard=0;
+ while(i!==target&&guard++<SIZE){i=parent[i];if(i<0)return null;path.push(i);}
  return i===target?path:null;
+}
+export function countRouteDirections(model,path){
+ let diagonal=0,axis=0;
+ for(let k=1;k<path.length;k++){
+  const a=model.xyz(path[k-1]),b=model.xyz(path[k]);
+  const d=Math.abs(a[0]-b[0])+Math.abs(a[1]-b[1])+Math.abs(a[2]-b[2]);
+  if(d>1)diagonal++;
+  else if(d===1)axis++;
+ }
+ return {diagonal,axis};
 }
 
 export function integrateVesselRoute(model,type,target){
  const path=routeInMatter(model,type,target);
- if(!path||!path.length)return false;
- const root=model.xyz(path[0]),end=model.xyz(target);
+ if(!path||path.length<2)return false;
+ const counts=countRouteDirections(model,path);
  let newly=0,parent=path[0],terminal=parent;
- for(let i of path){
-  if(model.matter[i]===type){parent=i;terminal=i;continue;}
-  if(model.setFluid(i,type)){
-   model.vesselSites[type].push(i);
-   model.branchParent[i]=parent;
-   parent=i;terminal=i;newly++;
+ for(let step=1;step<path.length;step++){
+  const next=path[step];
+  // Diagonal centerline segments must also provide a physically traversable
+  // 6-neighbor bridge, without changing the route's intended smooth direction.
+  const bridge=faceConnector(model,type,parent,next);
+  if(!bridge)return false;
+  for(const j of [...bridge,next]){
+   if(model.matter[j]===type){parent=j;terminal=j;continue;}
+   if(model.setFluid(j,type)){
+    model.vesselSites[type].push(j);
+    model.branchParent[j]=parent;
+    parent=j;terminal=j;newly++;
+   }
   }
  }
- if(newly)model.branchLoad[terminal]+=model.demand[target]*
-   (type===3?model.supplyAffinity[target]:model.drainAffinity[target]);
  if(newly){
-  const axes=+(Math.abs(root[0]-end[0])>2)+
-   +(Math.abs(root[1]-end[1])>2)+
-   +(Math.abs(root[2]-end[2])>2);
-  if(axes>=2){
-   if(type===4)model.diagonalVeinSteps++;
-   else model.diagonalArterySteps++;
-  }
+  model.branchLoad[terminal]+=model.demand[target]*
+   (type===3?model.supplyAffinity[target]:model.drainAffinity[target]);
+  // These count actual diagonal 3D centerline segments, not endpoint offsets.
+  if(type===4)model.diagonalVeinSteps+=counts.diagonal;
+  else model.diagonalArterySteps+=counts.diagonal;
+  if(!model.branchRouteStats)model.branchRouteStats={3:{diagonal:0,axis:0},4:{diagonal:0,axis:0}};
+  model.branchRouteStats[type].diagonal+=counts.diagonal;
+  model.branchRouteStats[type].axis+=counts.axis;
  }
  return newly>0;
 }
