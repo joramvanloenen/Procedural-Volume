@@ -54,6 +54,12 @@ The resulting network is *purpose-guided and locally cost-aware*, but it does **
 - [NCBI: pulmonary arteries alongside bronchioles and intersegmental venous drainage](https://www.ncbi.nlm.nih.gov/books/NBK545205/)
 - [Hepatic metabolic zonation and sinusoidal gradients](https://pmc.ncbi.nlm.nih.gov/articles/PMC5257182/)
 
+### Hair-thin venules
+
+After the arterial and venous trunks have reached tissue territories, a fine-vessel pass connects capillary exchange beds to venous collectors using **1-voxel-wide hairline lumens**. Local tissue demand and oxygen deficit prioritize the terminal points; each filament grows through 3D tissue rather than using a decorative particle or line mesh. The same pressure, fluid flux, oxygen and dye transport equations act on these lumen voxels. The GPU receives an additional **3D hair-vessel occupancy texture** so they can remain visible at small screen sizes and high density cutoff values.
+
+The **Hair-thin vein visibility** slider appears directly below the volume, and the **VEINS ONLY** preset makes the smallest branches easier to inspect. At 80³, the finest vessels are visual approximations of small venules, not explicitly resolved real-world micrometer-scale capillaries.
+
 ## Volumetric fluid dynamics
 
 Flow is calculated directly on the 3D voxel lattice:
