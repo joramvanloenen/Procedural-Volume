@@ -220,11 +220,17 @@ export function integrateVesselRoute(model,type,target){
  const path=routeInMatter(model,type,target);
  if(!path||!path.length)return false;
  const root=model.xyz(path[0]),end=model.xyz(target);
- let newly=0;
+ let newly=0,parent=path[0],terminal=parent;
  for(let i of path){
-  if(model.matter[i]===type)continue;
-  if(model.setFluid(i,type)){model.vesselSites[type].push(i);newly++;}
+  if(model.matter[i]===type){parent=i;terminal=i;continue;}
+  if(model.setFluid(i,type)){
+   model.vesselSites[type].push(i);
+   model.branchParent[i]=parent;
+   parent=i;terminal=i;newly++;
+  }
  }
+ if(newly)model.branchLoad[terminal]+=model.demand[target]*
+   (type===3?model.supplyAffinity[target]:model.drainAffinity[target]);
  if(newly){
   const axes=+(Math.abs(root[0]-end[0])>2)+
    +(Math.abs(root[1]-end[1])>2)+
