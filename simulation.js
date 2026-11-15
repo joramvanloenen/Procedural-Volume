@@ -47,6 +47,8 @@ export class VolumeModel{
   this.fieldBytes=new Uint8Array(SIZE*4);
   this.materialBytes=new Uint8Array(SIZE);
   this.flowBytes=new Uint8Array(SIZE*4);
+  this.smoothVesselBytes=new Uint8Array(SIZE*4);
+  this.geometryVersion=0;this.smoothedVersion=-1;
   this.occupied=0;this.lumenCount=0;this.capillaryCount=0;this.wallCount=0;
   this.inlet=-1;this.outlet=-1;this.tips=[];this.iteration=0;this.maxIterations=60;
   this.vesselSites={3:[],4:[]};this.growthPlan={3:[],4:[]};
@@ -130,6 +132,7 @@ export class VolumeModel{
   let before=this.matter[i];if(!before)return false;
   if(this.isFluid(i))return before===type;
   this.matter[i]=type;this.density[i]=type===MAT.CAPILLARY?.67:.79;
+  this.geometryVersion++;
   this.lumenCount++;if(type===MAT.CAPILLARY)this.capillaryCount++;
   this.pressure[i]=type===MAT.ARTERY?.82:type===MAT.VEIN?.18:.50;
   this.bloodOxygen[i]=type===MAT.ARTERY?(this.settings.organ==='lung'?.53:1):type===MAT.VEIN?.70:.80;
@@ -316,6 +319,7 @@ export class VolumeModel{
   for(let j of walls){
    if(this.matter[j]===MAT.TISSUE||this.matter[j]===MAT.DENSE){
     this.matter[j]=MAT.WALL;this.density[j]=clamp(this.density[j]+.18,.2,1);this.wallCount++;
+    this.geometryVersion++;
    }
   }
  }
@@ -590,7 +594,41 @@ export class VolumeModel{
    coverage:s.count?100*s.covered/s.count:0
   }));
  }
+ // Render-only material-volume filter: a trilinearly sampled multi-channel
+ // vessel occupancy field softens diagonal lumens without changing the discrete
+ // fluid mask, chemistry, boundary conditions or face-flux connectivity.
+ updateVesselOccupancy(){
+  if(this.smoothedVersion===this.geometryVersion)return false;
+  const out=this.smoothVesselBytes;
+  const weights=[.31,1,.31];
+  for(let z=0;z<N;z++)for(let y=0;y<N;y++)for(let x=0;x<N;x++){
+   const base=this.index(x,y,z)*4;
+   let artery=0,vein=0,capillary=0,wall=0;
+   for(let dz=-1;dz<=1;dz++){
+    const zz=z+dz;if(zz<0||zz>=N)continue;
+    for(let dy=-1;dy<=1;dy++){
+     const yy=y+dy;if(yy<0||yy>=N)continue;
+     for(let dx=-1;dx<=1;dx++){
+      const xx=x+dx;if(xx<0||xx>=N)continue;
+      const weight=weights[dx+1]*weights[dy+1]*weights[dz+1];
+      const kind=this.matter[this.index(xx,yy,zz)];
+      if(kind===MAT.ARTERY)artery+=weight;
+      else if(kind===MAT.VEIN)vein+=weight;
+      else if(kind===MAT.CAPILLARY)capillary+=weight;
+      else if(kind===MAT.WALL)wall+=weight;
+     }
+    }
+   }
+   out[base]=Math.round(clamp(artery*.69,0,1)*255);
+   out[base+1]=Math.round(clamp(vein*.69,0,1)*255);
+   out[base+2]=Math.round(clamp(capillary*.69,0,1)*255);
+   out[base+3]=Math.round(clamp(wall*.5,0,1)*255);
+  }
+  this.smoothedVersion=this.geometryVersion;
+  return true;
+ }
  updateTexture(){
+  this.updateVesselOccupancy();
   const f=this.fieldBytes,m=this.materialBytes,v=this.flowBytes;
   for(let i=0;i<SIZE;i++){
    const t=this.matter[i],j=i*4;
