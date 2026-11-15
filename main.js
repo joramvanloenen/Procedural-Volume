@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
-import {GRID} from './simulation.js';
+import {GRID} from './simulation.js?v=curved-perfusion-20261115';
 const $=id=>document.getElementById(id),clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const wrap=$('canvasWrap');
 const settings={organ:'kidney',seed:38127,vascularity:72,heterogeneity:58,reach:65,speed:2,viscosity:40};
@@ -153,7 +153,7 @@ function begin(){
  $('loading').classList.remove('hidden');
  $('regenerate').disabled=true;
  if(worker)worker.terminate();
- worker=new Worker(new URL('./worker.js',import.meta.url),{type:'module'});
+ worker=new Worker(new URL('./worker.js?v=curved-perfusion-20261115',import.meta.url),{type:'module'});
  snapshot=null;
  $('specimenName').textContent=settings.organ.toUpperCase()+' / VOXEL SPECIMEN '+settings.seed;
  $('resLabel').textContent=GRID+'³ VOXEL FIELD';
