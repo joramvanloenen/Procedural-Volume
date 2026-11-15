@@ -20,5 +20,7 @@ jobs:
           node --check simulation.js
           node --check main.js
           node --check worker.js
+      - name: Verify scanner controls and visual resolution
+        run: node tests/ui-smoke.mjs
       - name: Verify anatomical vascular routing and conservation
         run: node tests/smoke.mjs
