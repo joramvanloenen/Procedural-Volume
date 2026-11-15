@@ -53,6 +53,7 @@ export class VolumeModel{
   this.occupied=0;this.lumenCount=0;this.capillaryCount=0;this.wallCount=0;
   this.inlet=-1;this.outlet=-1;this.tips=[];this.iteration=0;this.maxIterations=60;
   this.vesselSites={3:[],4:[]};this.growthPlan={3:[],4:[]};
+  this.reservedVesselType=new Uint8Array(SIZE);
   this.branchParent=new Int32Array(SIZE);this.branchParent.fill(-1);
   this.branchLoad=new Float32Array(SIZE);this.trunkVoxels=0;
   this.diagonalVeinSteps=0;this.diagonalArterySteps=0;
@@ -173,6 +174,36 @@ export class VolumeModel{
   const count=Math.max(20,Math.round(28+this.settings.vascularity*.32));
   this.growthPlan[MAT.ARTERY]=buildRegionalTargets(this,MAT.ARTERY,count);
   this.growthPlan[MAT.VEIN]=buildRegionalTargets(this,MAT.VEIN,count);
+  // Each branch network needs its own future perfusion destinations.
+  // Without reservations arterial tube dilation can consume the venous
+  // targets in dense myocardium, producing false perfusion and few veins.
+  const reserved=this.reservedVesselType;
+  for(const t of this.growthPlan[MAT.ARTERY])reserved[t.i]=MAT.ARTERY;
+  const used=new Set();
+  for(const target of this.growthPlan[MAT.VEIN]){
+   if(reserved[target.i]===MAT.ARTERY||used.has(target.i)){
+    const [x,y,z]=this.xyz(target.i);
+    let best=-1,bestScore=-Infinity;
+    for(let r=1;r<=4;r++){
+     for(let dz=-r;dz<=r;dz++)for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++){
+      if(Math.max(Math.abs(dx),Math.abs(dy),Math.abs(dz))!==r)continue;
+      const xx=x+dx,yy=y+dy,zz=z+dz;
+      if(!this.inside(xx,yy,zz))continue;
+      const i=this.index(xx,yy,zz);
+      if(reserved[i]||used.has(i)||this.layers[i]!==target.layer)continue;
+      if(this.matter[i]!==MAT.TISSUE&&this.matter[i]!==MAT.DENSE)continue;
+      const cost=Math.hypot(dx,dy,dz);
+      const score=this.drainAffinity[i]*this.demand[i]-
+        this.resistance[i]*.17-cost*.3;
+      if(score>bestScore){best=i;bestScore=score;}
+     }
+     if(best>=0)break;
+    }
+    if(best>=0){target.i=best;[target.x,target.y,target.z]=this.xyz(best);}
+   }
+   if(reserved[target.i]===MAT.ARTERY)continue;
+   reserved[target.i]=MAT.VEIN;used.add(target.i);
+  }
   this.maxIterations=Math.max(this.growthPlan[MAT.ARTERY].length,this.growthPlan[MAT.VEIN].length);
   this.maxIterations=Math.max(1,this.maxIterations);
   this.growthSuccess={3:0,4:0};
@@ -280,6 +311,7 @@ export class VolumeModel{
      if(!this.inside(xx,yy,zz))continue;
      const j=this.index(xx,yy,zz);
      if(this.matter[j]!==MAT.TISSUE&&this.matter[j]!==MAT.DENSE)continue;
+     if(this.reservedVesselType[j]&&this.reservedVesselType[j]!==type)continue;
      if(this.depth[j]<.042)continue;
      assigned.push([j,type]);
     }
