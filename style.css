@@ -47,7 +47,7 @@
 .viewer-controls-grid input[type=range]{margin:16px 0 10px;touch-action:pan-y;height:4px}
 .viewer-controls-grid input[type=range]::-webkit-slider-thumb{width:19px;height:19px}
 .viewer-controls-grid input[type=range]::-moz-range-thumb{width:17px;height:17px}
-.viewer-controls-grid .viewer-zone>label{display:block;margin:0 0 7px;color:#b6c8c2;font-size:10px}
+.viewer-controls-grid .viewer-zone>label,.viewer-controls-grid .viewer-quality>label{display:block;margin:0 0 7px;color:#b6c8c2;font-size:10px}
 .viewer-controls-grid .select-wrap select{padding:8px 26px 8px 9px;font-size:10px}
 .viewer-controls-grid .select-wrap:after{top:4px}
 .viewer-visibility{margin-top:14px;border-top:1px solid #304446;padding-top:10px}
