@@ -2,7 +2,7 @@ import {VolumeModel} from './simulation.js';
 
 // Heavy voxel growth, pressure solve and advection run off the rendering thread.
 // Each update is a snapshot of 3D material/velocity/chemical textures.
-let model=null,timer=null,playing=true,speed=2,generation=0,tickCount=0;
+let model=null,timer=null,playing=true,speed=2,generation=0,tickCount=0,lastVesselVersion=-1;
 const state=()=>{
  const m=model;
  return {
@@ -20,12 +20,16 @@ function snapshot(){
  if(!model)return;
  model.updateTexture();
  const field=model.fieldBytes.slice(),material=model.materialBytes.slice(),flow=model.flowBytes.slice(),layers=model.layerBytes.slice();
- postMessage({kind:'snapshot',stats:state(),field,material,flow,layers},
-  [field.buffer,material.buffer,flow.buffer,layers.buffer]);
+ const changed=model.smoothedVersion!==lastVesselVersion;
+ const vessel=changed?model.smoothVesselBytes.slice():null;
+ if(changed)lastVesselVersion=model.smoothedVersion;
+ const transfers=[field.buffer,material.buffer,flow.buffer,layers.buffer];
+ if(vessel)transfers.push(vessel.buffer);
+ postMessage({kind:'snapshot',stats:state(),field,material,flow,layers,vessel},transfers);
 }
 function halt(){if(timer)clearInterval(timer);timer=null;model=null;}
 function start(settings){
- halt();generation++;tickCount=0;speed=settings.speed||2;playing=true;
+ halt();generation++;tickCount=0;lastVesselVersion=-1;speed=settings.speed||2;playing=true;
  try{
   model=new VolumeModel(settings);
   snapshot();
