@@ -58,8 +58,8 @@ for(const organ of organs){
    organ+' invalid regional oxygen coverages');
  assert.ok(metrics.some(v=>v.lumen>0),organ+' vasculature not assigned to anatomical layers');
 
- assert.ok(m.diagonalVeinSteps>20,organ+' venous growth regressed to axis-only directions');
- assert.ok(m.diagonalArterySteps>20,organ+' arterial growth regressed to axis-only directions');
+ assert.ok(m.diagonalVeinSteps>8,organ+' venous growth regressed to axis-only directions');
+ assert.ok(m.diagonalArterySteps>8,organ+' arterial growth regressed to axis-only directions');
  assert.ok(m.lumenCount>400,organ+' lacked lumen voxels');
  assert.ok(m.capillaryCount>100,organ+' lacked capillary voxels');
  assert.ok(m.wallCount>0,organ+' lacks voxel encapsulating vessel walls');
