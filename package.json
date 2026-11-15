@@ -1,0 +1,1 @@
+{"name":"procedural-volume","version":"0.1.0","private":true,"type":"module","description":"Research-inspired volumetric organ and vascular growth visualizer","scripts":{"test":"node tests/smoke.mjs"}}
