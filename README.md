@@ -1,61 +1,82 @@
-# Procedural Volume
+# Procedural Volume — voxel fluid morphogenesis
 
-**A browser-based volumetric organ and vascular morphogenesis experiment.** Voxel tissue grows a connected arterial and venous circulation. Capillaries bridge the networks; an oxygen-demand feedback loop adds new vascular paths through underserved tissue. The result can be examined with an MRI-inspired synthetic volume scan, opacity and density filtering, cut planes, flow tracers and live telemetry.
+**A 3D organ generator whose tissue, vessel walls, lumens, blood, oxygen, nutrients and local velocity live in the SAME voxel volume.** No decorative tube mesh, blood particle system, or hidden vessel-edge graph is used to represent circulation.
 
-[GitHub repository](https://github.com/joramvanloenen/Procedural-Volume) · [GitHub Pages application](https://joramvanloenen.github.io/Procedural-Volume/)
+**[Open the live application](https://joramvanloenen.github.io/Procedural-Volume/)** · [Source repository](https://github.com/joramvanloenen/Procedural-Volume)
 
-## Features
+## Voxel volume
 
-- **64 × 64 × 64 voxel density volume** with synthetic cortex, inner tissues, fibre variation and metabolic-demand maps.
-- **Five adjustable specimen morphologies:** kidney, liver, heart, lung and experimental organoid. These are *stylized* density shapes, not anatomical reconstructions.
-- **Angiogenesis-inspired branch growth:** distributed demand attractors guide artery/vein sprouts, with neighborhood checks preventing branches from leaving tissue.
-- **Anastomosis and real connected loops:** capillary bridges join the arterial tree to a venous return tree. A second tissue-wide feedback pass creates additional connected paths to locally oxygen-deficient voxels.
-- **Pressure-based flow calculation:** per-segment conductance scales approximately with radius to the fourth power divided by length, then a nodal pressure solver determines directed flow. Animated tracers follow flow-weighted downstream connections.
-- **Oxygen propagation:** rasterized supply channels seed a voxel-neighborhood distance transform; diffusion reach and local demand determine simulated oxygen coverage.
-- **MRI-inspired ray-marched volume viewer** with scan-density cutoff, clipping, tissue opacity, oxygen deficit heatmap and an anatomical palette.
-- **Interactive WebGL2 visualization:** orbit, zoom, pan, pause, playback speed, live generation, visibility toggles and PNG capture.
-- **Deterministic seeds** and separate controls for vessel proliferation, tissue heterogeneity and oxygen diffusion reach.
+A single **64 × 64 × 64** material lattice contains:
 
-## Run locally
+| Material ID | Voxel contents |
+| :-- | :-- |
+| 0 | Empty / exterior |
+| 1 | Soft parenchyma / low-density tissue |
+| 2 | Dense cells / structured tissue |
+| 3 | Arterial lumen, containing fluid |
+| 4 | Venous lumen, containing fluid |
+| 5 | Capillary lumen, containing fluid |
+| 6 | Encapsulating vessel-wall tissue |
 
-No build tools or npm install required. Open using a local HTTP server:
+Additional 3D scalar/vector fields: **matter density**, **metabolic oxygen demand**, **tissue oxygen**, **nutrient concentration**, **blood oxygen**, **transported fluorescent dye**, **pressure**, **velocity X/Y/Z**, and **per-face fluid fluxes**.
 
-```bash
+The GPU ray marcher samples class, matter and flow textures, revealing actual voxel lumens and vessel walls, not tube geometry. You can hide low-density material with the cutoff slider, adjust opacity, use a section plane, and view tissue oxygen or blood flow.
+
+## Embryonic vessel growth
+
+Local six-neighbor tissue values and unmet metabolic demand direct branching arterial/venous fronts through voxel space. A spatial flood-distance pass identifies regions that need a capillary connection. Those regions are linked back through *contiguous* fluid-voxel channels to both arterial and venous matter. Vessel-wall material encapsulates all lumen boundaries after growth. Different cell and organ matter densities control their oxygen demand.
+
+Morphologies: kidney, liver, heart, lung, and an experimental organoid. They are stylized forms, not medical reconstructions.
+
+## Volumetric fluid dynamics
+
+Flow is calculated directly on the 3D voxel lattice:
+
+1. **Boundary conditions:** fixed inlet pressure (arterial) and outlet pressure (venous).
+2. **Viscosity-modified face conductance:** neighboring fluid voxels share a conductive face, while solid/fluid interfaces are impermeable.
+3. **Discrete pressure equation:** a matrix-free preconditioned conjugate-gradient solver computes the pressure potential for all connected lumen voxels.
+4. **Conservative face flux:** velocity/flow comes from local pressure differences across shared voxel faces; interior flux divergence is approximately zero.
+5. **Moving fluid contents:** oxygen-bearing plasma and dye advect through these faces with a flux-limited upwind finite-volume step.
+6. **Oxygen and nutrient exchange:** the fluid/tissue boundary acts as a membrane; tissue fields diffuse through 6-neighborhoods and are consumed according to local metabolic demand.
+7. **Pulsing flow and viscosity:** playback drives time-varying inlet delivery and viscosity attenuates transport.
+
+The flow and chemical transport run inside a **dedicated Web Worker** so the WebGL volume view remains responsive. Dynamic 3D state textures are transferred to the rendering thread.
+
+This is a **simplified pressure-driven low-Reynolds-number vascular fluid model, not a full Navier–Stokes blood cell simulation**, nor is the procedural anatomy medically validated. It does, however, move fluid *within volume cells* rather than animating abstract path segments.
+
+## Interface
+
+- **MRI:** synthetic scan transfer function and density cutoff.
+- **Oxygen:** color tissue according to local oxygen content.
+- **Anatomy:** material-class anatomy view, including vessel walls.
+- **Flow:** pressure-based fluid colors and advected dye moving through lumens.
+- **Volume toggles:** show/hide tissues, arterial voxels, venous voxels, capillary voxels, and dye independently.
+- **Growth:** organ morphology, seed, branch proliferation, tissue heterogeneity, diffusion range, playback and viscosity controls.
+- **Scanner:** density cutoff, opacity, Z cut plane, orbit/pan/zoom, and PNG screenshot.
+- **Telemetry:** oxygen coverage, capillary/lumen voxel count, flowing voxels and perfused tissue.
+
+## Development
+
+No bundler required. ES modules and Three.js are loaded from GitHub Pages and a public CDN, so use a local HTTP server:
+
+\`\`\`sh
 python -m http.server 8000
-```
+\`\`\`
 
-Then visit [http://localhost:8000](http://localhost:8000). Requires a modern browser with WebGL2 and 3D textures, plus internet access for the Three.js CDN import map. The project is ready for static GitHub Pages hosting.
+Open [http://localhost:8000](http://localhost:8000). You need a modern browser with WebGL2 and 3D textures. Native JavaScript unit tests:
 
-## Controls
+\`\`\`sh
+npm test
+\`\`\`
 
-| Control | Effect |
-| --- | --- |
-| Morphology / seed | Regenerate the selected organ with a deterministic random seed |
-| Branch proliferation | Number of sprouting attractors and maximum vascular growth |
-| Cell heterogeneity | Tissue density and local metabolic-demand variations |
-| Diffusion reach | Distance oxygen/nutrients penetrate tissue from supply vessels |
-| Density cutoff | Remove lower-density tissue from the volumetric ray march |
-| Tissue opacity | Change how deeply the scan reveals tissue and vascular structures |
-| Section / cut plane | Discard volume and vessel segments beyond the selected Z section |
-| MRI / Oxygen / Anatomy | Switch the synthetic scan transfer function |
-| Vessel / tissue / tracer toggles | Independently reveal system layers |
-| Drag, right drag, scroll | Orbit, pan, zoom |
-| G | Regrow with the current settings |
+They verify all five morphologies, physical 6-neighbor connectivity, conservation of inlet/outlet volume flux, no dye leakage into tissue, oxygen diffusion, and actual lumen-wall materials.
 
-## Model notes
+## Research background
 
-The algorithm is *inspired by* developmental vasculogenesis, angiogenesis, sprouting in hypoxic tissue and anastomosis. It is **not** a detailed biomedical simulator. In particular, there are no endothelial-cell mechanics, VEGF reaction-diffusion PDEs, actual MRI physics, blood oxygen saturation equations, organ-specific circulatory topology, or measured anatomical scaling. The oxygen model uses a local voxel-neighborhood transport proxy, and the conductance model is a simplified Poiseuille-style network, not a resolved 3D fluid simulation.
+The approach is a creative approximation of hypoxia-driven angiogenesis, anastomosis, cell density differentiation, flow-driven network maturation, and diffusion. For a medical-grade model you'd need calibrated cell-specific signaling, tissue biomechanics, experimentally measured permeability, validated vessel diameters, and a full multiphase Navier–Stokes / hemorheology solver.
 
-There is an intentionally strict network invariant: a capillary begins at an arterial-network node and ends at a venous-network node. Thus, newly added supply channels are connected to both the inlet and the outlet. A pressure solve after every rescue batch verifies flow through the network, while density and oxygen volumes remain independent from the rendered tube surfaces.
-
-## Biological references
-
-- [AHA statement: developmental angiogenesis, vasculogenesis, remodeling and flow](https://pmc.ncbi.nlm.nih.gov/articles/PMC8077227/)
-- [Vascular differentiation and hypoxia-driven sprouting](https://pmc.ncbi.nlm.nih.gov/articles/PMC6309638/)
-- [Vessel sprouting, anastomosis and network maturation](https://pmc.ncbi.nlm.nih.gov/articles/PMC4190897/)
+Source references: [vascular development review](https://pmc.ncbi.nlm.nih.gov/articles/PMC8077227/), [hypoxia and sprouting](https://pmc.ncbi.nlm.nih.gov/articles/PMC6309638/).
 
 ## Deployment
 
-The repository includes a static GitHub Actions deployment workflow under `.github/workflows/deploy.yml`. In the repository settings, open **Pages → Build and deployment → Source → GitHub Actions** to enable initial publishing, if it is not yet enabled. Each push to `main` will then update the Pages site.
-
-Copyright (c) 2026. Research/creative tooling prototype. Not for medical use.
+The GitHub Actions workflow in \`.github/workflows/deploy.yml\` runs JavaScript syntax checks and voxel-fluid tests, then publishes the static app to GitHub Pages on each push to \`main\`.
