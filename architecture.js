@@ -164,82 +164,71 @@ class BinaryHeap{
   while((i*2+1)<a.length){let j=i*2+1,r=j+1;if(r<a.length&&a[r].score<a[j].score)j=r;if(last.score<=a[j].score)break;a[i]=a[j];i=j}a[i]=last;return top}
  get length(){return this.data.length}
 }
-export function routeInMatter(model,type,origin,target){
- if(origin===target)return [];
- const [tx,ty,tz]=model.xyz(target),N=model.N;
- const g=new Float32Array(model.size);g.fill(Infinity);
- const parent=new Int32Array(model.size);parent.fill(-1);
- const heap=new BinaryHeap();const closed=new Uint8Array(model.size);
- const [sx,sy,sz]=model.xyz(origin);
- const dist=(x,y,z)=>Math.hypot(tx-x,ty-y,tz-z);
- g[origin]=0;heap.push(origin,dist(sx,sy,sz));
- let found=false,pops=0;
- while(heap.length&&pops++<55000){
-  const {node:i}=heap.pop();
-  if(closed[i])continue;
-  closed[i]=1;
-  if(i===target){found=true;break}
-  const [x,y,z]=model.xyz(i);
+// Multi-source, weighted Dijkstra: connect a target to the *lowest cost* node
+// of the entire existing vascular tree, not an arbitrarily chosen nearest node.
+// Pre-existing vessels are absorbing terminals; no free-floating branch can occur.
+// Per-voxel traversing cost includes actual matrix density / layer resistance.
+export function routeInMatter(model,type,target){
+ if(model.matter[target]===type)return [];
+ const SIZE=model.size,N=model.N;
+ if(!model.routingScratch)model.routingScratch={
+  cost:new Float32Array(SIZE),parent:new Int32Array(SIZE),
+  seen:new Uint32Array(SIZE),closed:new Uint32Array(SIZE),stamp:0
+ };
+ const state=model.routingScratch;
+ state.stamp++;
+ if(state.stamp===4294967295){
+  state.stamp=1;state.seen.fill(0);state.closed.fill(0);
+ }
+ const stamp=state.stamp,g=state.cost,parent=state.parent,
+  seen=state.seen,closed=state.closed;
+ const open=new BinaryHeap();
+ seen[target]=stamp;g[target]=0;parent[target]=-1;open.push(target,0);
+ let found=-1,steps=0;
+ while(open.length&&steps++<100000){
+  const item=open.pop(),i=item.node;
+  if(closed[i]===stamp)continue;
+  closed[i]=stamp;
+  if(model.matter[i]===type){found=i;break;}
+  const x=i%N,y=Math.floor(i/N)%N,z=Math.floor(i/(N*N));
   if(!model.inside(x,y,z))continue;
   for(const d of stepDirs){
    const xx=x+d[0],yy=y+d[1],zz=z+d[2];
    if(!model.inside(xx,yy,zz))continue;
-   const j=cell(xx,yy,zz),m=model.matter[j];
-   if(!m||m===3&&type!==3||m===4&&type!==4||m===5||m===6||closed[j])continue;
-   const existing=m===type;
-   const tissueCost=existing?.17:1+model.resistance[j]*.30;
-   // Encourage aligned circulation near target organ zones, without
-   // forcing the whole branch to tunnel through high-resistance tissue.
-   const affinity=type===3?model.supplyAffinity[j]:model.drainAffinity[j];
-   const specialization=existing?0:1/(.9+Math.max(.1,affinity))*.11;
-   const next=g[i]+tissueCost+specialization;
-   if(next>=g[j])continue;
-   parent[j]=i;g[j]=next;heap.push(j,next+dist(xx,yy,zz)*1.12);
+   const j=cell(xx,yy,zz),matter=model.matter[j];
+   if(!matter||matter===5||matter===6||matter===3&&type!==3||matter===4&&type!==4||closed[j]===stamp)continue;
+   const previous=parent[i],lastDir=previous<0?0:
+    (i-previous)===(j-i)?1:0;
+   const matrixCost=matter===type?.08:
+    1+model.resistance[j]*.35+(lastDir?0:.04)+
+    .08/(.5+(type===3?model.supplyAffinity[j]:model.drainAffinity[j]));
+   const proposed=g[i]+matrixCost;
+   if(seen[j]===stamp&&proposed>=g[j])continue;
+   seen[j]=stamp;parent[j]=i;g[j]=proposed;
+   open.push(j,proposed);
   }
  }
- if(!found)return null;
- const path=[];let current=target;
- while(current!==origin&&current>=0&&path.length<model.size){
-  path.push(current);current=parent[current];
+ if(found<0)return null;
+ let path=[found],i=found,guard=0;
+ while(i!==target&&guard++<SIZE){
+  i=parent[i];if(i<0)return null;path.push(i);
  }
- if(current!==origin)return null;
- path.reverse();
- return path;
+ return i===target?path:null;
 }
 
 export function integrateVesselRoute(model,type,target){
- const pool=model.vesselSites[type];
- if(!pool?.length)return false;
- // Search for several nearby trunk points, not only the nearest: choosing
- // the lowest resistance path tends to avoid both dense cells and detours.
- let nearest=[];
- for(let n=0;n<pool.length;n+=Math.max(1,Math.floor(pool.length/3500))){
-  const id=pool[n],a=model.xyz(id),b=model.xyz(target);
-  const d=sq(a[0]-b[0])+sq(a[1]-b[1])+sq(a[2]-b[2]);
-  if(nearest.length<4||d<nearest[nearest.length-1].d){
-   nearest.push({id,d});nearest.sort((a,b)=>a.d-b.d);
-   nearest.length=Math.min(nearest.length,4);
-  }
- }
- let best=null,bestScore=Infinity,bestOrigin=-1;
- for(let {id,d} of nearest.slice(0,3)){
-  const path=routeInMatter(model,type,id,target);
-  if(!path)continue;
-  const meanResistance=path.reduce((sum,j)=>sum+(model.matter[j]===type?0:model.resistance[j]),0);
-  const cost=path.length+meanResistance*.23;
-  if(cost<bestScore){best=path;bestScore=cost;bestOrigin=id}
- }
- if(!best)return false;
- const from=model.xyz(bestOrigin),to=model.xyz(target);
+ const path=routeInMatter(model,type,target);
+ if(!path||!path.length)return false;
+ const root=model.xyz(path[0]),end=model.xyz(target);
  let newly=0;
- for(let i of best){
+ for(let i of path){
   if(model.matter[i]===type)continue;
-  if(model.setFluid(i,type)){pool.push(i);newly++}
+  if(model.setFluid(i,type)){model.vesselSites[type].push(i);newly++;}
  }
  if(newly){
-  const axes=+(Math.abs(from[0]-to[0])>2)+
-   +(Math.abs(from[1]-to[1])>2)+
-   +(Math.abs(from[2]-to[2])>2);
+  const axes=+(Math.abs(root[0]-end[0])>2)+
+   +(Math.abs(root[1]-end[1])>2)+
+   +(Math.abs(root[2]-end[2])>2);
   if(axes>=2){
    if(type===4)model.diagonalVeinSteps++;
    else model.diagonalArterySteps++;
