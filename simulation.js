@@ -4,8 +4,8 @@
 // Tissue sprouts explore a 26-neighbor 3D neighborhood, with face-connected
 // voxel bridges for diagonals; capillary paths use 3D distance fields. Flow is a conservative face-flux
 // finite-volume pressure/transport model (not a full Navier-Stokes solver).
-import {applyArchitecture,buildRegionalTargets,integrateVesselRoute,ZONE} from './architecture.js';
-import {DIRECTIONS_26,voxelizeCurve} from './vascular-geometry.js';
+import {applyArchitecture,buildRegionalTargets,integrateVesselRoute,ZONE} from './architecture.js?v=curved-perfusion-20261115';
+import {DIRECTIONS_26,voxelizeCurve} from './vascular-geometry.js?v=curved-perfusion-20261115';
 export const GRID=64;
 const N=GRID, N2=N*N, SIZE=N*N*N;
 const clamp=(x,a,b)=>Math.min(b,Math.max(a,x));
